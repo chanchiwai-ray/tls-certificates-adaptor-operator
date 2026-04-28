@@ -1,0 +1,37 @@
+# Copyright 2026 Chi Wai Chan
+# See LICENSE file for licensing details.
+
+type: charm
+name: tls-certificate-adaptor
+title: TLS Certificate Adaptor
+summary: Bridges the legacy reactive tls-certificates interface with the modern tls-certificates-interface used by vault-k8s or lego-k8s.
+links:
+  source: https://github.com/chanchiwai-ray/tls-certificate-adaptor-operator
+  issues: https://github.com/chanchiwai-ray/tls-certificate-adaptor-operator/issues
+
+description: |
+  A machine charm that bridges the legacy reactive tls-certificates interface
+  (Charmed OpenStack, Yoga and earlier) with the modern tls-certificates-interface
+  used by vault-k8s, enabling Charmed OpenStack services to obtain TLS certificates
+  from vault-k8s without modification to either side.
+
+base: ubuntu@24.04
+platforms:
+  ubuntu@22.04:amd64:
+  ubuntu@24.04:amd64:
+
+parts:
+  charm:
+    source: .
+    plugin: uv
+    build-snaps:
+      - astral-uv
+
+provides:
+  certificates:
+    interface: tls-certificates
+
+requires:
+  vault-pki:
+    interface: tls-certificates
+    limit: 1
