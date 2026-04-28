@@ -1,0 +1,35 @@
+# Copyright 2026 __AUTHOR_NAME__
+# See LICENSE file for licensing details.
+
+name: Promote charm
+
+on:
+  workflow_dispatch:
+    inputs:
+      origin-channel:
+        type: choice
+        description: Origin channel
+        required: true
+        options:
+          - latest/edge
+          - latest/candidate
+      destination-channel:
+        type: choice
+        description: Destination channel
+        required: true
+        options:
+          - latest/stable
+          - latest/candidate
+
+jobs:
+  promote:
+    name: Promote charm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Promote charm
+        uses: canonical/charming-actions/promote-charm@2.6.0
+        with:
+          credentials: ${{ secrets.CHARMHUB_TOKEN }}
+          origin-channel: ${{ inputs.origin-channel }}
+          destination-channel: ${{ inputs.destination-channel }}

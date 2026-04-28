@@ -1,0 +1,20 @@
+# Copyright 2026 __AUTHOR_NAME__
+# See LICENSE file for licensing details.
+
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - terraform/**
+
+jobs:
+  fmt-check:
+    name: Terraform format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Check formatting
+        run: terraform -chdir=terraform fmt -check -recursive

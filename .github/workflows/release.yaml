@@ -1,0 +1,46 @@
+# Copyright 2026 __AUTHOR_NAME__
+# See LICENSE file for licensing details.
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build charm
+    runs-on: ubuntu-latest
+    outputs:
+      charm-path: ${{ steps.pack.outputs.charms }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pack charm
+        id: pack
+        uses: canonical/craft-actions/charmcraft/pack@main
+      - name: Upload charm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: charm
+          path: ${{ steps.pack.outputs.charms }}
+
+  publish:
+    name: Publish to edge
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download charm artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: charm
+          path: built-charm
+      - name: Upload charm to Charmhub
+        uses: canonical/charming-actions/upload-charm@2.6.0
+        with:
+          credentials: ${{ secrets.CHARMHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          channel: latest/edge
+          built-charm-path: built-charm/${{ needs.build.outputs.charm-path }}
