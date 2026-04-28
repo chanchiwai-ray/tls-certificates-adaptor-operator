@@ -32,6 +32,6 @@ provides:
     interface: tls-certificates
 
 requires:
-  vault-pki:
+  certificates-upstream:
     interface: tls-certificates
     limit: 1

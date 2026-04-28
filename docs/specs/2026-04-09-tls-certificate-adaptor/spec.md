@@ -8,23 +8,23 @@ date: 2026-04-27
 
 ## Abstract
 
-The `tls-certificate-adaptor-operator` is a machine charm that bridges the legacy reactive `tls-certificates` interface (Charmed OpenStack, Yoga and earlier) with the modern `tls-certificates-interface` used by vault-k8s, enabling Charmed OpenStack services to obtain TLS certificates from vault-k8s without modification to either side.
+The `tls-certificate-adaptor-operator` is a machine charm that bridges the legacy reactive `tls-certificates` interface (Charmed OpenStack, Yoga and earlier) with the modern `tls-certificates-interface` (charmlibs), enabling Charmed OpenStack services to obtain TLS certificates from any compatible upstream TLS provider — such as vault-k8s or lego-k8s — without modification to either side.
 
 ## Rationale
 
-Charmed OpenStack services (keystone, nova, cinder, etc.) rely on the reactive `tls-certificates` interface in which the CA provider generates and returns both the private key and the signed certificate. Modern Juju TLS tooling (vault-k8s) implements the `tls-certificates-interface` (charmlibs), which requires the requirer to generate its own key, send a CSR, and receive back only the signed certificate.
+Charmed OpenStack services (keystone, nova, cinder, etc.) rely on the reactive `tls-certificates` interface in which the CA provider generates and returns both the private key and the signed certificate. Modern Juju TLS tooling (vault-k8s, lego-k8s) implements the `tls-certificates-interface` (charmlibs), which requires the requirer to generate its own key, send a CSR, and receive back only the signed certificate.
 
-Without an adaptor, OpenStack services cannot obtain certificates from vault-k8s. The adaptor sits between the two, translating requests and responses so that the underlying charms require no changes.
+Without an adaptor, OpenStack services cannot obtain certificates from these modern providers. The adaptor sits between the two, translating requests and responses so that the underlying charms require no changes.
 
 ## Specification
 
 ### Goals
 
 - Provide the old reactive `tls-certificates` interface to one or more Charmed OpenStack services simultaneously (multiple `certificates` relations).
-- Forward certificate requests to vault-k8s using the modern `tls-certificates-interface` (charmlibs).
+- Forward certificate requests to a compatible upstream TLS provider (vault-k8s or lego-k8s) using the modern `tls-certificates-interface` (charmlibs).
 - Generate RSA private keys on behalf of old-interface requesters and return them alongside signed certificates.
 - Propagate the signed certificate, CA certificate, and chain back to old-interface requesters.
-- Handle certificate renewal when vault-k8s rotates or reissues a certificate.
+- Handle certificate renewal when the upstream TLS provider rotates or reissues a certificate.
 
 ### Non-Goals
 
@@ -41,11 +41,11 @@ The adaptor charm is a machine charm with no workload process. Its only responsi
 graph LR
     OC["OpenStack charms (keystone, nova-cloud-controller, cinder…)"]
     AD["tls-certificate-adaptor (this charm)"]
-    VK["vault-k8s"]
+    UP["upstream TLS provider (vault-k8s or lego-k8s)"]
 
     OC -- "common_name + SANs (old tls-certificates)" --> AD
-    AD -- "CSR (new tls-certificates)" --> VK
-    VK -- "cert + CA + chain (new tls-certificates)" --> AD
+    AD -- "CSR (new tls-certificates)" --> UP
+    UP -- "cert + CA + chain (new tls-certificates)" --> AD
     AD -- "cert + key + CA (old tls-certificates)" --> OC
 ```
 
@@ -55,14 +55,16 @@ graph LR
 sequenceDiagram
     participant OC as OpenStack charm
     participant AD as Adaptor (this charm)
-    participant VK as vault-k8s
+    participant JS as Juju Secret (internal)
+    participant UP as Upstream TLS provider
 
     OC->>AD: relation-changed (common_name, SANs)
-    AD->>AD: generate RSA private key
+    AD->>AD: generate RSA private key for old requirer
     AD->>AD: build CSR from key + common_name + SANs
-    AD->>VK: send CSR (new tls-certificates)
-    VK-->>AD: certificate_available event (cert, CA, chain)
-    AD->>AD: look up requirer by CSR fingerprint
+    AD->>JS: store secret(csr_sha256) = {private_key, requirer_unit, relation_id}
+    AD->>UP: send CSR (new tls-certificates)
+    UP-->>AD: certificate_available event (cert, CA, chain)
+    AD->>JS: look up secret by CSR fingerprint → get private_key + requirer
     AD->>OC: write cert + key + CA to relation data (old interface)
 ```
 
@@ -70,28 +72,31 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant VK as vault-k8s
+    participant UP as Upstream TLS provider
     participant AD as Adaptor
+    participant JS as Juju Secret (internal)
     participant OC as OpenStack charm
 
-    VK-->>AD: certificate_expiring / certificate_invalidated
+    UP-->>AD: certificate_expiring / certificate_invalidated
     AD->>AD: generate new RSA private key
     AD->>AD: build new CSR
-    AD->>VK: re-send CSR
-    VK-->>AD: certificate_available (new cert)
+    AD->>JS: store new secret(new_csr_sha256) = {private_key, requirer_unit, relation_id}
+    AD->>UP: re-send CSR
+    UP-->>AD: certificate_available (new cert)
+    AD->>JS: look up secret by new CSR fingerprint
     AD->>OC: update cert + key + CA in relation data
 ```
 
 ### Example Deployment
 
-A single `tls-certificate-adaptor` application serves all Charmed OpenStack services in the model — there is no need for a separate adaptor per service. Each OpenStack charm (keystone, nova-cloud-controller, cinder) forms its own `certificates` relation to the adaptor. The adaptor holds a single `vault-pki` relation to vault-k8s.
+A single `tls-certificate-adaptor` application serves all Charmed OpenStack services in the model — there is no need for a separate adaptor per service. Each OpenStack charm (keystone, nova-cloud-controller, cinder) forms its own `certificates` relation to the adaptor. The adaptor holds a single `certificates-upstream` relation to an upstream TLS provider.
 
-Because vault-k8s is a Kubernetes charm and the adaptor is a machine charm, the `vault-pki` relation is a **cross-model relation**: vault-k8s is deployed in a Kubernetes model, and the adaptor is deployed alongside the OpenStack charms in a machine model.
+Both vault-k8s and lego-k8s implement the same `tls-certificates` interface (charmlibs) and are interchangeable as the upstream provider. Because these are Kubernetes charms and the adaptor is a machine charm, the `certificates-upstream` relation is a **cross-model relation**: the TLS provider is deployed in a Kubernetes model, and the adaptor is deployed alongside the OpenStack charms in a machine model.
 
 ```mermaid
 graph TB
     subgraph k8s-model ["Kubernetes model"]
-        VK["vault-k8s (vault-pki endpoint)"]
+        UP["vault-k8s (vault-pki endpoint) or lego-k8s (certificates endpoint)"]
     end
 
     subgraph machine-model ["Machine model"]
@@ -104,31 +109,37 @@ graph TB
     KS -- "certificates" --> AD
     NV -- "certificates" --> AD
     CN -- "certificates" --> AD
-    AD -- "vault-pki (cross-model)" --> VK
+    AD -- "certificates-upstream (cross-model)" --> UP
 ```
 
 **Deployment steps:**
 
 ```bash
-# 1. Deploy vault-k8s in a Kubernetes model and expose the vault-pki endpoint as an offer
+# Option A: using vault-k8s as the upstream provider
 juju switch k8s-model
 juju deploy vault-k8s
 juju offer vault-k8s:vault-pki
 
-# 2. Deploy the adaptor in the machine model
 juju switch machine-model
 juju deploy tls-certificate-adaptor
+juju relate tls-certificate-adaptor:certificates-upstream admin/k8s-model.vault-k8s
 
-# 3. Relate the adaptor to vault-k8s via cross-model relation
-juju relate tls-certificate-adaptor:vault-pki admin/k8s-model.vault-k8s
+# Option B: using lego-k8s as the upstream provider
+juju switch k8s-model
+juju deploy lego-k8s
+juju offer lego-k8s:certificates
 
-# 4. Relate each OpenStack service to the adaptor
+juju switch machine-model
+juju deploy tls-certificate-adaptor
+juju relate tls-certificate-adaptor:certificates-upstream admin/k8s-model.lego-k8s
+
+# Either way — relate each OpenStack service to the adaptor
 juju relate keystone:certificates tls-certificate-adaptor:certificates
-juju relate nova-compute:certificates tls-certificate-adaptor:certificates
+juju relate nova-cloud-controller:certificates tls-certificate-adaptor:certificates
 juju relate cinder:certificates tls-certificate-adaptor:certificates
 ```
 
-After step 4, each unit of keystone, nova-compute, and cinder will receive its own signed certificate, private key, and CA certificate through the old `tls-certificates` relation data. All certificate requests are forwarded to the same vault-k8s instance.
+Each unit of keystone, nova-cloud-controller, and cinder will receive its own signed certificate, private key, and CA certificate through the old `tls-certificates` relation data. All certificate requests are forwarded to the single upstream TLS provider.
 
 ### Module Structure
 
@@ -149,8 +160,8 @@ provides:
     interface: tls-certificates # old reactive interface
 
 requires:
-  vault-pki:
-    interface: tls-certificates # new charmlibs interface — same Juju interface name
+  certificates-upstream:
+    interface: tls-certificates # new charmlibs interface — same Juju interface name; compatible with vault-k8s and lego-k8s
     limit: 1
 ```
 
@@ -185,14 +196,14 @@ class CharmState(BaseModel):
 
 ### Events Handled
 
-| Event                                              | Source                 | Action                                                                                       |
-| -------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
-| `certificates_relation_joined`                     | Old-interface requirer | No-op; wait for `relation_changed` with actual request data                                  |
-| `certificates_relation_changed`                    | Old-interface requirer | Parse `cert_requests` from relation data; generate key + CSR; send to vault-k8s              |
-| `certificates_relation_broken`                     | Old-interface requirer | Remove associated CSRs from new-interface relation data; clean up state                      |
-| `tls_certificates_relation_joined`                 | vault-k8s              | Re-send any pending CSRs (idempotent recovery on relation re-join)                           |
-| `certificate_available`                            | vault-k8s (charmlibs)  | Look up requirer by CSR fingerprint; write cert + key + CA to old-interface relation data    |
-| `certificate_expiring` / `certificate_invalidated` | vault-k8s (charmlibs)  | Generate new key + CSR; re-send to vault-k8s; update old relation data when new cert arrives |
+| Event                                              | Source                 | Action                                                                                                                   |
+| -------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `certificates_relation_joined`                     | Old-interface requirer | No-op; wait for `relation_changed` with actual request data                                                              |
+| `certificates_relation_changed`                    | Old-interface requirer | Parse `cert_requests` from relation data; generate key + CSR; send to vault-k8s                                          |
+| `certificates_relation_broken`                     | Old-interface requirer | Remove associated CSRs from upstream relation data; revoke mapping secrets; clean up state                               |
+| `certificates_upstream_relation_joined`            | Upstream TLS provider  | Re-send any pending CSRs (idempotent recovery on relation re-join)                                                       |
+| `certificate_available`                            | Upstream TLS provider  | Look up requirer via CSR-fingerprint secret; write cert + key + CA to old-interface relation data; revoke mapping secret |
+| `certificate_expiring` / `certificate_invalidated` | Upstream TLS provider  | Generate new key + CSR; store new mapping secret; re-send CSR; update old relation data when new cert arrives            |
 
 ### Old-Interface Relation Data Format
 
@@ -209,12 +220,37 @@ Example:
 
 ### New-Interface Relation Data Format
 
-The adaptor uses the `charmlibs.interfaces.tls_certificates` library, which manages the relation data format automatically. The adaptor sends CSRs via `request_certificate_creation()` and reads results via the `certificate_available` event.
+The adaptor uses the `charmlibs.interfaces.tls_certificates` library, which manages the relation data format automatically. The adaptor initialises `TLSCertificatesRequiresV4` with a list of `CertificateRequestAttributes`; the library automatically sends CSRs and surfaces results via the `certificate_available` event.
 
 ### Key Management
 
-- **Old-interface private keys**: generated by the adaptor using `cryptography.hazmat.primitives.asymmetric.rsa` (RSA 2048-bit minimum). Stored in old-interface unit relation data alongside the certificate. This is a known limitation documented under "Security Considerations".
-- **New-interface private keys** (adaptor's own upstream keys): managed by the `charmlibs.interfaces.tls_certificates` library, which stores them as Juju Secrets. Requires Juju >= 3.0.
+There are three categories of key/secret managed by the adaptor:
+
+| Category                                | Owner                            | Storage                                            | Visible to old charm?                                    |
+| --------------------------------------- | -------------------------------- | -------------------------------------------------- | -------------------------------------------------------- |
+| Old-requirer private key                | Adaptor (generated per unit CSR) | Juju Secret (internal) + relation data on delivery | Key delivered via plain relation data; secret not shared |
+| CSR→requirer mapping                    | Adaptor                          | Juju Secret (internal, unit-owned)                 | No                                                       |
+| Upstream private key (adaptor→provider) | Adaptor                          | Juju Secret (managed by charmlibs)                 | No                                                       |
+
+#### Old-requirer private key and CSR mapping
+
+When an old-interface `certificates_relation_changed` event arrives, the adaptor:
+
+1. Generates an RSA private key (2048-bit minimum) for the old requirer unit.
+2. Builds a CSR from that key, the `common_name`, and the `sans`.
+3. **Creates a unit-owned Juju Secret** with label `tls-adaptor-{csr_sha256_hex}` containing:
+   - `private-key`: the generated RSA private key (PEM)
+   - `requirer-unit`: e.g. `keystone/0`
+   - `relation-id`: the old-interface relation ID as a string
+4. Sends the CSR to the upstream provider via charmlibs.
+
+This secret is **never granted or shared** with old reactive charms. When `certificate_available` fires, the adaptor retrieves the secret by CSR fingerprint, writes the cert + private key to the old requirer's relation data, then revokes the secret.
+
+> **Why not peer relation data?** Peer data requires a `peers` endpoint and is visible to all units. A unit-owned Juju Secret is simpler, scoped to the adaptor unit, and keeps the private key off the relation data bus until it must be delivered.
+
+#### Upstream private key
+
+The adaptor's own private key (used when building the CSR sent to vault-k8s / lego-k8s) is managed entirely by the `charmlibs.interfaces.tls_certificates` library, which stores it as a Juju Secret. The adaptor does not handle this key directly. Requires Juju >= 3.0.
 
 ### Juju Requirements
 
@@ -228,13 +264,14 @@ The adaptor uses the `charmlibs.interfaces.tls_certificates` library, which mana
 
 > **Known limitation:** Private keys generated by the adaptor for old-interface requesters are stored as plaintext in Juju unit relation data, which is persisted in the Juju controller database. This is an inherent limitation of the old `tls-certificates` reactive interface contract.
 >
-> The adaptor is intended as a **migration bridge** to allow Charmed OpenStack services to move off charm-vault (OpenStack) and onto vault-k8s incrementally. It is not a permanent TLS solution. Operators should prioritize upgrading OpenStack charms to use the new interface natively.
+> The adaptor is intended as a **migration bridge** to allow Charmed OpenStack services to move off charm-vault (OpenStack) and onto vault-k8s or lego-k8s incrementally. It is not a permanent TLS solution. Operators should prioritize upgrading OpenStack charms to use the new interface natively.
 
 ## Further Information
 
 ### Architecture Decisions
 
-- [ADR-1: Private key ownership for legacy-interface certificate requesters](./decision.md) — Settles why private keys are stored in relation data and not in Juju Secrets.
+- [ADR-1: Private key ownership for legacy-interface certificate requesters](./decision.md#1-private-key-ownership-for-legacy-interface-certificate-requesters) — Settles why old-requirer keys are delivered via relation data.
+- [ADR-2: CSR-to-requirer mapping persistence](./decision.md#2-csr-to-requirer-mapping-persistence) — Settles why unit-owned Juju Secrets are used for the internal mapping.
 
 ### Library Choice
 
