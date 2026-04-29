@@ -8,20 +8,27 @@
 """TLS Certificate Adaptor charm."""
 
 import contextlib
+import json
 import logging
 import typing
 
 import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
+    CertificateDeniedEvent,
     CertificateRequestAttributes,
     PrivateKey,
     TLSCertificatesRequiresV4,
 )
 
 from certificate_provider import write_certificate
-from constants import OLD_INTERFACE_RELATION_NAME, UPSTREAM_RELATION_NAME
-from crypto import build_csr
+from constants import (
+    CSR_FINGERPRINTS_KEY,
+    JUJU_SECRET_LABEL_PREFIX,
+    OLD_INTERFACE_RELATION_NAME,
+    UPSTREAM_RELATION_NAME,
+)
+from crypto import build_csr, csr_sha256_hex
 from secret import (
     get_csr_mapping,
     get_or_generate_private_key,
@@ -83,7 +90,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         )
         self.framework.observe(
             self.on[OLD_INTERFACE_RELATION_NAME].relation_broken,
-            self.reconcile,
+            self._on_certificates_relation_broken,
         )
         self.framework.observe(
             self.on[UPSTREAM_RELATION_NAME].relation_joined,
@@ -92,6 +99,10 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         self.framework.observe(
             self.tls_certificates.on.certificate_available,
             self._on_certificate_available,
+        )
+        self.framework.observe(
+            self.tls_certificates.on.certificate_denied,
+            self._on_certificate_denied,
         )
 
     @property
@@ -121,10 +132,18 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         CSR fingerprint.  The upstream TLS library picks up the updated CSR
         list automatically via the ``refresh_events`` hook registered in
         ``__init__``.  Already-mapped requests are skipped (idempotent).
+
+        Also writes the accumulated CSR fingerprints for this relation into the
+        local unit relation databag so that ``_on_certificates_relation_broken``
+        can revoke them without needing remote unit data.
         """
         state = self.state
+        fingerprints = []
         for cr in state.certificate_requests if state else []:
+            if cr.relation_id != event.relation.id:
+                continue
             csr_pem = build_csr(self._charm_key_pem, cr.common_name, cr.sans_dns)
+            fingerprints.append(csr_sha256_hex(csr_pem))
             if get_csr_mapping(self, csr_pem) is not None:
                 logger.debug(
                     "CSR mapping already exists for %s (%s) — skipping",
@@ -145,6 +164,8 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 cr.requirer_unit_name,
                 cr.relation_id,
             )
+        if fingerprints:
+            event.relation.data[self.unit][CSR_FINGERPRINTS_KEY] = json.dumps(fingerprints)
         self.reconcile(event)
 
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
@@ -190,7 +211,49 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             key=private_key_pem,
             ca=str(event.ca),
         )
+        self.reconcile()
+
+    def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
+        """Handle a denied certificate request from the upstream TLS provider.
+
+        Revokes the mapping secret for the denied CSR and logs the error so
+        the operator can investigate.  The old-interface requirer is left in
+        its current state; no data is written to the relation databag.
+        """
+        csr_pem = str(event.certificate_signing_request)
+        mapping = get_csr_mapping(self, csr_pem)
+        if mapping is None:
+            logger.warning(
+                "certificate_denied: no mapping found for denied CSR — already cleaned up"
+            )
+            return
         revoke_csr_mapping(self, csr_pem)
+        logger.error(
+            "Certificate request denied for %s (error: %s); mapping revoked",
+            mapping.get("requirer-unit", "unknown"),
+            event.error,
+        )
+
+    def _on_certificates_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
+        """Revoke all mapping secrets for the broken old-interface relation.
+
+        Reads the CSR fingerprints stored in the local unit relation databag
+        during ``_on_certificates_relation_changed`` and revokes each mapping
+        secret.  Secrets already gone are silently skipped.  Calls
+        ``reconcile()`` to update unit status.
+        """
+        raw = event.relation.data[self.unit].get(CSR_FINGERPRINTS_KEY, "")
+        fingerprints: list[str] = json.loads(raw) if raw else []
+        for fingerprint in fingerprints:
+            label = f"{JUJU_SECRET_LABEL_PREFIX}{fingerprint}"
+            try:
+                secret = self.model.get_secret(label=label)
+                secret.remove_all_revisions()
+                logger.info(
+                    "Revoked mapping secret %r for broken relation %d", label, event.relation.id
+                )
+            except ops.SecretNotFoundError:
+                logger.debug("Mapping secret %r already gone — skipping", label)
         self.reconcile()
 
 
