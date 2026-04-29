@@ -10,11 +10,11 @@ Prevents orphaned mapping secrets and dangling CSRs at the upstream provider aft
 
 ## Acceptance Criteria
 
-- [ ] All mapping secrets for the broken relation's CSRs are revoked.
-- [ ] The upstream CSRs for those requests are no longer in the new-interface relation data.
-- [ ] Other relations' CSRs are unaffected.
-- [ ] If a mapping secret is not found for a given CSR (already cleaned up), the loop continues without error.
-- [ ] Unit tests cover: one relation broken with two active CSRs → both secrets revoked, upstream CSRs removed; second relation unaffected.
+- [x] All mapping secrets for the broken relation's CSRs are revoked.
+- [x] The upstream CSRs for those requests are no longer in the new-interface relation data.
+- [x] Other relations' CSRs are unaffected.
+- [x] If a mapping secret is not found for a given CSR (already cleaned up), the loop continues without error.
+- [x] Unit tests cover: one relation broken with two active CSRs → both secrets revoked, upstream CSRs removed; second relation unaffected.
 
 ## Files
 

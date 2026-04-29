@@ -8,7 +8,7 @@ Spec: [docs/specs/2026-04-09-tls-certificate-adaptor/spec.md](../../specs/2026-0
 - [x] PR 001 — Foundation and old-interface parsing: tasks 001, 002, 003, 004
 - [x] PR 002 — CSR generation and upstream forwarding: tasks 001, 002, 003, 004, 005
 - [x] PR 003 — Certificate delivery: tasks 001, 002, 003
-- [ ] PR 004 — Renewal and cleanup: tasks 001, 002, 003
+- [x] PR 004 — Renewal and cleanup: tasks 001, 002, 003
 
 ## Task checklist
 
@@ -24,6 +24,6 @@ Spec: [docs/specs/2026-04-09-tls-certificate-adaptor/spec.md](../../specs/2026-0
 - [x] `003-certificate-delivery/001-certificate-provider-write` — Write cert + key + CA to old-interface relation data
 - [x] `003-certificate-delivery/002-certificate-available-handler` — Handle `certificate_available` event
 - [x] `003-certificate-delivery/003-unit-tests` — Unit tests for end-to-end certificate delivery
-- [ ] `004-renewal-and-cleanup/001-renewal-handlers` — Handle `certificate_expiring` and `certificate_invalidated`
-- [ ] `004-renewal-and-cleanup/002-relation-broken` — Handle `certificates_relation_broken`
-- [ ] `004-renewal-and-cleanup/003-unit-tests` — Unit tests for renewal and cleanup
+- [x] `004-renewal-and-cleanup/001-renewal-handlers` — Handle `certificate_expiring` and `certificate_invalidated`
+- [x] `004-renewal-and-cleanup/002-relation-broken` — Handle `certificates_relation_broken`
+- [x] `004-renewal-and-cleanup/003-unit-tests` — Unit tests for renewal and cleanup

@@ -10,10 +10,10 @@ Renewal and cleanup paths involve the same helpers (crypto, secret) but in diffe
 
 ## Acceptance Criteria
 
-- [ ] Renewal test: simulate `certificate_available` (initial delivery) → `certificate_expiring` → new `certificate_available`; assert requirer's relation data is updated with the new cert.
-- [ ] Invalidation test: same as expiry test but via `certificate_invalidated`.
-- [ ] Cleanup test: two old-interface relations active → one broken → assert only that relation's secrets revoked and upstream CSRs removed.
-- [ ] `tox -e unit` passes; overall project coverage ≥ 90%.
+- [x] Renewal test: simulate `certificate_available` (initial delivery) → `certificate_expiring` → new `certificate_available`; assert requirer's relation data is updated with the new cert.
+- [x] Invalidation test: same as expiry test but via `certificate_invalidated`.
+- [x] Cleanup test: two old-interface relations active → one broken → assert only that relation's secrets revoked and upstream CSRs removed.
+- [x] `tox -e unit` passes; overall project coverage ≥ 90%.
 
 ## Files
 

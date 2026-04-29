@@ -10,10 +10,10 @@ Ensures certificates are automatically renewed when the upstream provider signal
 
 ## Acceptance Criteria
 
-- [ ] On `certificate_expiring`: a new key + CSR is generated, a new mapping secret is stored, the CSR is re-submitted to upstream, and the old mapping secret is revoked.
-- [ ] On `certificate_invalidated`: same behaviour as `certificate_expiring`.
-- [ ] If the old mapping secret is not found (e.g. already revoked), log at WARNING and skip — do not crash.
-- [ ] Unit tests cover: expiry → new CSR submitted + old secret revoked; invalidation → same; missing old secret → warning logged.
+- [x] On `certificate_expiring`: a new key + CSR is generated, a new mapping secret is stored, the CSR is re-submitted to upstream, and the old mapping secret is revoked.
+- [x] On `certificate_invalidated`: same behaviour as `certificate_expiring`.
+- [x] If the old mapping secret is not found (e.g. already revoked), log at WARNING and skip — do not crash.
+- [x] Unit tests cover: expiry → new CSR submitted + old secret revoked; invalidation → same; missing old secret → warning logged.
 
 ## Files
 
