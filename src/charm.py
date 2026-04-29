@@ -7,6 +7,7 @@
 
 """TLS Certificate Adaptor charm."""
 
+import contextlib
 import logging
 import typing
 
@@ -168,8 +169,10 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         requirer_unit_name = mapping["requirer-unit"]
         private_key_pem = mapping["private-key"]
 
-        relation = self.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
-        if relation is None:
+        relation = None
+        with contextlib.suppress(ops.RelationNotFoundError):
+            relation = self.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
+        if relation is None or not relation.active:
             logger.info(
                 "Old-interface relation %d no longer exists; revoking mapping for %s",
                 relation_id,
