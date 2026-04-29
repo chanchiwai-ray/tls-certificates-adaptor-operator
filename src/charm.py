@@ -43,6 +43,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         """
         super().__init__(*args)
 
+        self._state: CharmState | None = None
         self._charm_key_pem = get_or_generate_private_key(self)
 
         # Build CertificateRequestAttributes from the current old-interface
@@ -83,8 +84,10 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
 
     @property
     def state(self) -> CharmState | None:
-        """The charm state."""
-        return CharmState.from_charm(self)
+        """The charm state, computed once per event and cached for the lifetime of this instance."""
+        if self._state is None:
+            self._state = CharmState.from_charm(self)
+        return self._state
 
     def reconcile(self, _: ops.HookEvent | None = None) -> None:
         """Evaluate current state and set unit status.
