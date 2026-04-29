@@ -10,10 +10,10 @@ These are the cryptographic primitives the adaptor needs to generate a key + CSR
 
 ## Acceptance Criteria
 
-- [ ] `generate_private_key()` returns a valid PEM RSA private key of at least 2048 bits.
-- [ ] `build_csr(key_pem, common_name, sans)` returns a valid PEM CSR with the correct CN and SAN extension.
-- [ ] `csr_sha256_hex(csr_pem)` returns the lowercase hex SHA-256 fingerprint of the CSR.
-- [ ] Unit tests verify the above using `cryptography` library introspection (not just string checks).
+- [x] `generate_private_key()` returns a valid PEM RSA private key of at least 2048 bits.
+- [x] `build_csr(key_pem, common_name, sans)` returns a valid PEM CSR with the correct CN and SAN extension.
+- [x] `csr_sha256_hex(csr_pem)` returns the lowercase hex SHA-256 fingerprint of the CSR.
+- [x] Unit tests verify the above using `cryptography` library introspection (not just string checks).
 
 ## Files
 

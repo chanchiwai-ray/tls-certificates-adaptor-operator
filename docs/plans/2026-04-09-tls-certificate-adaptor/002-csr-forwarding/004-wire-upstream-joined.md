@@ -10,9 +10,9 @@ Provides idempotent recovery when the upstream provider disconnects and reconnec
 
 ## Acceptance Criteria
 
-- [ ] After the upstream relation joins, all pending CSRs (those with an existing mapping secret) are present in the new-interface relation data.
-- [ ] No duplicate CSRs are created if a CSR was already present.
-- [ ] Unit tests cover: re-join with one pending CSR → CSR re-sent; re-join with no pending CSRs → no-op.
+- [x] After the upstream relation joins, all pending CSRs (those with an existing mapping secret) are present in the new-interface relation data.
+- [x] No duplicate CSRs are created if a CSR was already present.
+- [x] Unit tests cover: re-join with one pending CSR → CSR re-sent; re-join with no pending CSRs → no-op.
 
 ## Files
 

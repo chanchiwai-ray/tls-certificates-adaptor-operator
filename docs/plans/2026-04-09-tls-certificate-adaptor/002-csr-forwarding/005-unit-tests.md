@@ -10,10 +10,10 @@ The CSR forwarding path involves multiple interacting components (crypto, secret
 
 ## Acceptance Criteria
 
-- [ ] Tests mock `TLSCertificatesRequiresV4` to verify it is initialised with the correct `CertificateRequestAttributes`.
-- [ ] Tests use `ops[testing]` (`Harness` or `Context`) to simulate relation events.
-- [ ] Tests for: first request → key + CSR + secret created; second identical request → idempotent (no duplicate secret); `certificates_upstream_relation_joined` with pending CSRs → CSRs re-sent.
-- [ ] `tox -e unit` passes; coverage ≥ 90% for all modules touched in PR 002.
+- [x] Tests mock `TLSCertificatesRequiresV4` to verify it is initialised with the correct `CertificateRequestAttributes`.
+- [x] Tests use `ops[testing]` (`Harness` or `Context`) to simulate relation events.
+- [x] Tests for: first request → key + CSR + secret created; second identical request → idempotent (no duplicate secret); `certificates_upstream_relation_joined` with pending CSRs → CSRs re-sent.
+- [x] `tox -e unit` passes; coverage ≥ 90% for all modules touched in PR 002.
 
 ## Files
 
