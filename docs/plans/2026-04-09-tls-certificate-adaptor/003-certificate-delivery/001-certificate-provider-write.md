@@ -26,3 +26,9 @@ Separates old-interface relation data serialisation from the event handler, keep
 - The `cert_type` field in the output must be `"server"` (only server certs are in scope for this version).
 - `common_name` in the output should match what the requirer originally requested.
 - CA chain is not part of the old interface format per the reference implementation (R4, R5 in spec) — omit `chain` from the output unless confirmed otherwise.
+
+## Work items
+
+- [ ] Code changes
+- [ ] Local testing
+- [ ] Commit changes

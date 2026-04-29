@@ -26,3 +26,9 @@ This is the certificate delivery step — the observable end-to-end outcome of t
 - Map `certificate_signing_request` → fingerprint → look up mapping secret.
 - The old-interface relation may have been broken between CSR submission and delivery. Check that `self.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)` is not `None` before writing; if gone, just revoke the secret and log at INFO.
 - `TLSCertificatesRequiresV4.on.certificate_available` must be observed in `__init__`; use `self.certificates_requires.on.certificate_available` (where `certificates_requires` is the library instance stored on `self`).
+
+## Work items
+
+- [ ] Code changes
+- [ ] Local testing
+- [ ] Commit changes

@@ -26,3 +26,9 @@ The certificate delivery path spans the most modules (state, crypto, secret, cha
 - Use `ops[testing]` `Context` / `Harness` to drive both events in sequence within a single test.
 - Produce a self-signed cert in the test fixture using the `cryptography` library so assertions can be made on the actual PEM content.
 - Keep test fixtures in a shared `conftest.py` if multiple test files reuse them.
+
+## Work items
+
+- [ ] Code changes
+- [ ] Local testing
+- [ ] Commit changes

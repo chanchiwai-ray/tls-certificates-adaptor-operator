@@ -17,20 +17,20 @@ Both charms implement the same architectural pattern:
 
 ```{mermaid}
 graph LR
-    E[Events] --> H[Observed in charm.py]
-    H --> R[Relation Libraries]
-    H --> C[Configuration]
-    H --> SS[Secret]
-    R --> S[State Module]
-    C --> S
-    SS --> S
-    S --> W[Workload/Service Module]
-    W --> T[Templates]
-    W --> WL[Workload/System]
+  E[Events] --> H[Observed in charm.py]
+  H --> R[Relation Libraries]
+  H --> C[Configuration]
+  H --> SS[Secret]
+  R --> S[State Module]
+  C --> S
+  SS --> S
+  S --> W[Workload/Service Module]
+  W --> T[Templates]
+  W --> WL[Workload/System]
 
-    style S fill:#ffe1e1
-    style W fill:#e1f5ff
-    style H fill:#fff4e1
+  style S fill:#ffe1e1
+  style W fill:#e1f5ff
+  style H fill:#fff4e1
 ```
 
 The flow of data through the charm follows this pattern:
@@ -72,7 +72,7 @@ class CharmState(BaseModel):
 
   @classmethod
   def from_charm(cls, charm: ops.CharmBase, ...) -> "CharmState":
-      """Create a CharmState from a CharmBase instance."""
+    """Create a CharmState from a CharmBase instance."""
 
 
 class CharmBaseWithState(ops.CharmBase, ABC):
@@ -81,16 +81,28 @@ class CharmBaseWithState(ops.CharmBase, ABC):
   @property
   @abstractmethod
   def state(self) -> CharmState | None:
-      """The charm state."""
+    """The charm state."""
 
   @abstractmethod
   def reconcile(self, _: ops.HookEvent) -> None:
-      """Reconcile configuration."""
+    """Reconcile configuration."""
+```
+
+Example usage with caching of `CharmState` in `charm.py`:
+
+```python
+class MyCharm(CharmBaseWithState):
+  ...
+  @property
+  def state(self) -> CharmState | None:
+    if self._state is None:
+      self._state = CharmState.from_charm(self)
+    return self._state
 ```
 
 ### `secret.py`
 
-The secret module manages or parse secrets for the charm
+The secret module manages or parses secrets for the charm
 
 ### `config.py`
 
@@ -109,14 +121,14 @@ logger = logging.getLogger(__name__)
 
 
 class InvalidCharmConfigError(Exception):
-    """Exception raised when the charm configuration is invalid."""
+  """Exception raised when the charm configuration is invalid."""
 
 
 class CharmConfig(BaseModel):
-    """The pydantic model for charm config.
+  """The pydantic model for charm config.
 
-    Note that the charm config should be loaded via ops.CharmBase.load_config().
-    """
+  Note that the charm config should be loaded via ops.CharmBase.load_config().
+  """
 ```
 
 ### `service.py` / `workload.py`
@@ -158,26 +170,26 @@ The configuration flow in both charms follows this sequence:
 
 ```{mermaid}
 sequenceDiagram
-    participant J as Juju
-    participant C as charm.py
-    participant S as state.py
-    participant W as workload / service module
-    participant WL as Workload / Service
+  participant J as Juju
+  participant C as charm.py
+  participant S as state.py
+  participant W as workload / service module
+  participant WL as Workload / Service
 
-    J->>C: Event (config-changed, relation-changed, secret-changed)
-    C->>C: Observe event
-    C->>S: CharmState.from_charm()
-    S->>S: Load config (config.py)
-    S->>S: Gather relation data (relation libraries)
-    S->>S: Gather secret data (secret.py)
-    S->>S: Validate and transform
-    S->>C: Return CharmState
-    C->>W: configure(state)
-    W->>W: Render templates
-    W->>WL: Apply configuration
-    W->>WL: Restart if needed
-    WL->>C: Service status
-    C->>J: Set unit status
+  J->>C: Event (config-changed, relation-changed, secret-changed)
+  C->>C: Observe event
+  C->>S: CharmState.from_charm()
+  S->>S: Load config (config.py)
+  S->>S: Gather relation data (relation libraries)
+  S->>S: Gather secret data (secret.py)
+  S->>S: Validate and transform
+  S->>C: Return CharmState
+  C->>W: configure(state)
+  W->>W: Render templates
+  W->>WL: Apply configuration
+  W->>WL: Restart if needed
+  WL->>C: Service status
+  C->>J: Set unit status
 ```
 
 This pattern ensures that:

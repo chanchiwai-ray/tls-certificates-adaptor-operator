@@ -9,11 +9,17 @@ on:
 jobs:
   check:
     name: Code quality
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up uv
         uses: astral-sh/setup-uv@v7.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Install tox
         run: uv tool install tox --with tox-uv
       - name: Run code quality checks
@@ -22,9 +28,7 @@ jobs:
   build:
     name: Build charm
     needs: [check]
-    runs-on: ubuntu-latest
-    outputs:
-      charm-path: ${{ steps.pack.outputs.charms }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Pack charm
@@ -34,7 +38,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: charm
-          path: ${{ steps.pack.outputs.charms }}
+          path: "*.charm"
 
   integration:
     name: Integration tests
@@ -47,6 +51,9 @@ jobs:
         with:
           name: charm
           path: built-charm
+      - name: List the names of the downloaded charms
+        run: |
+          ls built-charm/*.charm
       - name: Set up MicroK8s
         run: |
           sudo snap install microk8s --channel=1.32-strict/stable --classic
