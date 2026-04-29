@@ -10,15 +10,15 @@ Wires the event-to-reconcile flow required by the holistic pattern so that the c
 
 ## Acceptance Criteria
 
-- [ ] `charm.py` observes `certificates_relation_changed` and `certificates_relation_broken`.
-- [ ] `reconcile()` calls `CharmState.from_charm()` without error.
-- [ ] Unit status is `WaitingStatus` when no `certificates-upstream` relation exists, `ActiveStatus` when it does.
-- [ ] `tox -e unit` passes; coverage ≥ 90% for `src/charm.py`.
+- [x] `charm.py` observes `certificates_relation_changed` and `certificates_relation_broken`.
+- [x] `reconcile()` calls `CharmState.from_charm()` without error.
+- [x] Unit status is `WaitingStatus` when no `certificates-upstream` relation exists, `ActiveStatus` when it does.
+- [x] `tox -e unit` passes; coverage ≥ 90% for `src/charm.py`.
 
 ## Files
 
 - `src/charm.py` — update event observers and reconcile skeleton
-- `tests/unit/test_charm.py` — update/expand unit tests (rename from `test_base.py` if appropriate)
+- `tests/unit/test_charm.py` — update/expand unit tests (renamed from `test_base.py`)
 
 ## Notes
 
