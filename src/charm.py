@@ -12,14 +12,21 @@ import typing
 
 import ops
 from charmlibs.interfaces.tls_certificates import (
+    CertificateAvailableEvent,
     CertificateRequestAttributes,
     PrivateKey,
     TLSCertificatesRequiresV4,
 )
 
+from certificate_provider import write_certificate
 from constants import OLD_INTERFACE_RELATION_NAME, UPSTREAM_RELATION_NAME
 from crypto import build_csr
-from secret import get_csr_mapping, get_or_generate_private_key, store_csr_mapping
+from secret import (
+    get_csr_mapping,
+    get_or_generate_private_key,
+    revoke_csr_mapping,
+    store_csr_mapping,
+)
 from state import CharmBaseWithState, CharmState
 
 logger = logging.getLogger(__name__)
@@ -81,6 +88,10 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             self.on[UPSTREAM_RELATION_NAME].relation_joined,
             self.reconcile,
         )
+        self.framework.observe(
+            self.tls_certificates.on.certificate_available,
+            self._on_certificate_available,
+        )
 
     @property
     def state(self) -> CharmState | None:
@@ -134,6 +145,50 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 cr.relation_id,
             )
         self.reconcile(event)
+
+    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
+        """Deliver a signed certificate to the old-interface requirer.
+
+        Looks up the per-CSR mapping secret, writes cert + key + CA to the
+        old-interface requirer's relation databag, then revokes the mapping
+        secret.  Logs an error and skips gracefully if the mapping is missing.
+        If the old-interface relation is gone, revokes the mapping and logs
+        at INFO.
+        """
+        csr_pem = str(event.certificate_signing_request)
+        mapping = get_csr_mapping(self, csr_pem)
+        if mapping is None:
+            logger.error(
+                "No CSR mapping found for certificate (CN=%s); skipping delivery",
+                event.certificate.common_name,
+            )
+            return
+
+        relation_id = int(mapping["relation-id"])
+        requirer_unit_name = mapping["requirer-unit"]
+        private_key_pem = mapping["private-key"]
+
+        relation = self.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
+        if relation is None:
+            logger.info(
+                "Old-interface relation %d no longer exists; revoking mapping for %s",
+                relation_id,
+                requirer_unit_name,
+            )
+            revoke_csr_mapping(self, csr_pem)
+            return
+
+        write_certificate(
+            relation=relation,
+            charm_unit=self.unit,
+            requirer_unit_name=requirer_unit_name,
+            common_name=str(event.certificate.common_name),
+            cert=str(event.certificate),
+            key=private_key_pem,
+            ca=str(event.ca),
+        )
+        revoke_csr_mapping(self, csr_pem)
+        self.reconcile()
 
 
 if __name__ == "__main__":  # pragma: nocover
