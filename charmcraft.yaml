@@ -15,7 +15,6 @@ description: |
   used by vault-k8s, enabling Charmed OpenStack services to obtain TLS certificates
   from vault-k8s without modification to either side.
 
-base: ubuntu@24.04
 platforms:
   ubuntu@22.04:amd64:
   ubuntu@24.04:amd64:
