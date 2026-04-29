@@ -4,6 +4,7 @@
 """Unit tests for state module."""
 
 import json
+from unittest.mock import patch
 
 import ops
 import ops.testing
@@ -11,6 +12,7 @@ import pytest
 
 from charm import TLSCertificateAdaptorCharm
 from constants import OLD_INTERFACE_RELATION_NAME
+from state import CharmState
 
 
 @pytest.fixture()
@@ -28,18 +30,14 @@ class TestCharmState:
         act: Run install and read state.
         assert: certificate_requests is empty.
         """
-        from state import CharmState
-
         collected: list[CharmState] = []
 
-        original_reconcile = TLSCertificateAdaptorCharm.reconcile
-        TLSCertificateAdaptorCharm.reconcile = lambda self, *_: collected.append(  # type: ignore
-            CharmState.from_charm(self)
-        )
-        try:
+        with patch.object(
+            TLSCertificateAdaptorCharm,
+            "reconcile",
+            lambda self, *_: collected.append(CharmState.from_charm(self)),
+        ):
             context.run(context.on.install(), ops.testing.State())
-        finally:
-            TLSCertificateAdaptorCharm.reconcile = original_reconcile  # type: ignore
 
         assert len(collected) == 1
         assert collected[0].certificate_requests == []
@@ -51,8 +49,6 @@ class TestCharmState:
         act: Run install with the relation in state and read state.
         assert: Both CertificateRequests are captured.
         """
-        from state import CharmState
-
         req_0 = json.dumps(
             [
                 {
@@ -73,14 +69,12 @@ class TestCharmState:
         state_in = ops.testing.State(relations={relation})
         collected: list[CharmState] = []
 
-        original_reconcile = TLSCertificateAdaptorCharm.reconcile
-        TLSCertificateAdaptorCharm.reconcile = lambda self, *_: collected.append(  # type: ignore
-            CharmState.from_charm(self)
-        )
-        try:
+        with patch.object(
+            TLSCertificateAdaptorCharm,
+            "reconcile",
+            lambda self, *_: collected.append(CharmState.from_charm(self)),
+        ):
             context.run(context.on.install(), state_in)
-        finally:
-            TLSCertificateAdaptorCharm.reconcile = original_reconcile  # type: ignore
 
         assert len(collected) == 1
         assert len(collected[0].certificate_requests) == 2
@@ -94,8 +88,6 @@ class TestCharmState:
         act: Run install with the relation in state and read state.
         assert: certificate_requests is empty.
         """
-        from state import CharmState
-
         relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
             remote_app_name="keystone",
@@ -104,14 +96,12 @@ class TestCharmState:
         state_in = ops.testing.State(relations={relation})
         collected: list[CharmState] = []
 
-        original_reconcile = TLSCertificateAdaptorCharm.reconcile
-        TLSCertificateAdaptorCharm.reconcile = lambda self, *_: collected.append(  # type: ignore
-            CharmState.from_charm(self)
-        )
-        try:
+        with patch.object(
+            TLSCertificateAdaptorCharm,
+            "reconcile",
+            lambda self, *_: collected.append(CharmState.from_charm(self)),
+        ):
             context.run(context.on.install(), state_in)
-        finally:
-            TLSCertificateAdaptorCharm.reconcile = original_reconcile  # type: ignore
 
         assert len(collected) == 1
         assert collected[0].certificate_requests == []
