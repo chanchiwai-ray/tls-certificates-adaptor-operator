@@ -25,3 +25,9 @@ Renewal and cleanup paths involve the same helpers (crypto, secret) but in diffe
 - For the full renewal test, produce two distinct self-signed certs (initial + renewed) in fixtures to assert the relation data is actually updated.
 - Coverage gate: `tox -e coverage-report` must not report below 90% on any source file in `src/`.
 - After all PR 004 tests pass, run `tox` (all environments) to confirm no regressions across lint, unit, and static checks.
+
+## Work items
+
+- [ ] Code changes
+- [ ] Local testing
+- [ ] Commit changes

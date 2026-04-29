@@ -23,3 +23,22 @@ applyTo: "src/**/*.py, tests/**/*.py"
 - Security events such as user login, user creation, and permission changes should always be logged.
 
 Provide project context and coding guidelines that AI should follow when generating code, answering questions, or reviewing changes.
+
+## Docstrings
+
+- Use docstrings to document all public classes, methods, and functions (except in `tests/`).
+
+For example:
+
+```python
+def calculate_area(radius: float) -> float:
+  """Calculate the area of a circle given its radius.
+
+  Args:
+    radius (float): The radius of the circle.
+
+  Returns:
+    float: The area of the circle.
+  """
+  pass
+```

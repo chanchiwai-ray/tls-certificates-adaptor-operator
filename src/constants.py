@@ -8,5 +8,6 @@ OLD_INTERFACE_CERT_TYPE = "server"
 OLD_INTERFACE_RELATION_NAME = "certificates"
 UPSTREAM_RELATION_NAME = "certificates-upstream"
 
+CHARM_PRIVATE_KEY_SECRET_LABEL = "tls-adaptor-private-key"  # nosec B105
 JUJU_SECRET_LABEL_PREFIX = "tls-adaptor-"  # nosec B105
 PROCESSED_REQUESTS_SUFFIX = ".processed_requests"

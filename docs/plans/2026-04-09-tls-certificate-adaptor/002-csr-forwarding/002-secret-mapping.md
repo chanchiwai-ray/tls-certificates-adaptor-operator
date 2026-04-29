@@ -10,10 +10,10 @@ Provides the durable, Juju-restart-safe CSR→requirer mapping described in ADR-
 
 ## Acceptance Criteria
 
-- [ ] `store_csr_mapping()` creates a Juju Secret with the correct label, content keys (`private-key`, `requirer-unit`, `relation-id`), and no grants to other applications.
-- [ ] `get_csr_mapping()` returns the correct payload dict for a stored secret; raises a clear exception if not found.
-- [ ] `revoke_csr_mapping()` removes the secret without error; is a no-op if the secret does not exist (idempotent).
-- [ ] Unit tests use `ops.testing.Harness` (or `ops[testing]`) to verify secret creation, retrieval, and removal.
+- [x] `store_csr_mapping()` creates a Juju Secret with the correct label, content keys (`private-key`, `requirer-unit`, `relation-id`), and no grants to other applications.
+- [x] `get_csr_mapping()` returns the correct payload dict for a stored secret; raises a clear exception if not found.
+- [x] `revoke_csr_mapping()` removes the secret without error; is a no-op if the secret does not exist (idempotent).
+- [x] Unit tests use `ops.testing.Harness` (or `ops[testing]`) to verify secret creation, retrieval, and removal.
 
 ## Files
 

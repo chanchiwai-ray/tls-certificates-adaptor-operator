@@ -10,11 +10,11 @@ This is the core ingress path: translates old-interface cert requests into new-i
 
 ## Acceptance Criteria
 
-- [ ] A new `CertificateRequest` from an old-interface requirer results in a Juju Secret being created with the correct label and content.
-- [ ] The CSR is sent to the upstream provider (the charmlibs library databag is updated).
-- [ ] Re-triggering the event for the same request is idempotent (no duplicate secrets or CSRs).
-- [ ] Requests with `cert_type != "server"` are silently skipped (logged at WARNING).
-- [ ] Unit tests cover: new request → secret created + CSR sent; repeated event → idempotent; non-server type → skipped.
+- [x] A new `CertificateRequest` from an old-interface requirer results in a Juju Secret being created with the correct label and content.
+- [x] The CSR is sent to the upstream provider (the charmlibs library databag is updated).
+- [x] Re-triggering the event for the same request is idempotent (no duplicate secrets or CSRs).
+- [x] Requests with `cert_type != "server"` are silently skipped (logged at WARNING).
+- [x] Unit tests cover: new request → secret created + CSR sent; repeated event → idempotent; non-server type → skipped.
 
 ## Files
 

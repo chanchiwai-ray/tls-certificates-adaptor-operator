@@ -26,3 +26,9 @@ Prevents orphaned mapping secrets and dangling CSRs at the upstream provider aft
 - During `relation_broken`, `event.relation` is still accessible but the remote units have already left. Use `event.relation.id` to identify which CSRs belong to this relation (from the mapping secret `relation-id` field).
 - To enumerate all mapping secrets, collect all `CertificateRequest` objects from the state (excluding the broken relation's data, which may still be readable during the hook) and check which secrets reference the broken relation ID.
 - After cleanup, call `reconcile()` to update unit status.
+
+## Work items
+
+- [ ] Code changes
+- [ ] Local testing
+- [ ] Commit changes

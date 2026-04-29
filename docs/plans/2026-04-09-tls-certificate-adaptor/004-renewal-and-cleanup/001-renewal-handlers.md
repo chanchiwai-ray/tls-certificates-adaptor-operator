@@ -26,3 +26,9 @@ Ensures certificates are automatically renewed when the upstream provider signal
 - `certificate_invalidated` similarly exposes the invalidated CSR.
 - Both events are available on `self.certificates_requires.on.certificate_expiring` and `.certificate_invalidated`.
 - After re-submitting the CSR, the charm must wait for a new `certificate_available` event before updating the old-interface requirer — do not clear the requirer's relation data during renewal.
+
+## Work items
+
+- [ ] Code changes
+- [ ] Local testing
+- [ ] Commit changes
