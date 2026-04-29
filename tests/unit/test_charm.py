@@ -4,10 +4,17 @@
 """Unit tests for charm.py."""
 
 import json
+import logging
 
 import ops
 import ops.testing
 import pytest
+from charmlibs.interfaces.tls_certificates import (
+    Certificate,
+    CertificateSigningRequest,
+    PrivateKey,
+    TLSCertificatesRequiresV4,
+)
 
 from charm import TLSCertificateAdaptorCharm
 from constants import (
@@ -17,9 +24,13 @@ from constants import (
     UPSTREAM_RELATION_NAME,
 )
 from crypto import build_csr, csr_sha256_hex, generate_private_key
+from tests.unit.conftest import sign_csr
 
 # Pre-generate a stable key so that test secret labels are predictable.
 _TEST_KEY_PEM = generate_private_key()
+
+# Class-level access to ObjectEvents is not fully typed; suppress the mypy warning once.
+_CERT_AVAILABLE_EVENT = TLSCertificatesRequiresV4.on.certificate_available  # type: ignore[arg-type]
 
 
 @pytest.fixture()
@@ -282,3 +293,187 @@ class TestCertificatesUpstreamRelationJoined:
 
         assert out.unit_status == ops.ActiveStatus()
         assert len(out.secrets) == len(state.secrets)
+
+
+class TestCertificateAvailableDelivery:
+    """Tests for _on_certificate_available (PR 003)."""
+
+    def _build_mapping_secret(
+        self,
+        csr_pem: str,
+        old_relation_id: int,
+        requirer_unit_name: str = "keystone/0",
+    ) -> ops.testing.Secret:
+        """Build a pre-populated CSR mapping secret for the given CSR."""
+        label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
+        return ops.testing.Secret(
+            label=label,
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": requirer_unit_name,
+                "relation-id": str(old_relation_id),
+            },
+        )
+
+    def test_happy_path_delivers_cert_and_revokes_mapping(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: Old-interface relation, upstream relation, and a CSR mapping secret.
+        act: Fire certificate_available with a signed cert.
+        assert: Old-interface unit databag contains cert + key; mapping secret is revoked.
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(csr_pem, old_relation.id)
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        out_old_relation = out.get_relation(old_relation.id)
+        assert out_old_relation is not None
+        payload = json.loads(out_old_relation.local_unit_data["keystone_0.processed_requests"])
+        assert payload[0]["cert"] == str(cert)
+        assert payload[0]["key"] == _TEST_KEY_PEM
+        assert payload[0]["ca"] == str(ca_certificate)
+        assert payload[0]["common_name"] == "keystone.internal"
+        assert payload[0]["cert_type"] == "server"
+
+    def test_mapping_secret_revoked_after_delivery(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: A CSR mapping secret exists.
+        act: Fire certificate_available for that CSR.
+        assert: The mapping secret no longer appears in the output state.
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(csr_pem, old_relation.id)
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        mapping_labels = {s.label for s in out.secrets if s.label == mapping_secret.label}
+        assert mapping_labels == set()
+
+    def test_missing_mapping_secret_logs_error_and_skips(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """
+        arrange: No CSR mapping secret in state.
+        act: Fire certificate_available.
+        assert: Charm does not raise; an ERROR is logged.
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+
+        state_in = ops.testing.State(
+            relations={upstream_relation},
+            secrets={key_secret},
+        )
+
+        with caplog.at_level(logging.ERROR):
+            out = context.run(
+                context.on.custom(
+                    _CERT_AVAILABLE_EVENT,
+                    certificate=cert,
+                    certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                    ca=ca_certificate,
+                    chain=[ca_certificate],
+                ),
+                state_in,
+            )
+
+        assert any("No CSR mapping found" in r.message for r in caplog.records)
+        assert len(out.secrets) == len(state_in.secrets)
+
+    def test_stale_old_relation_revokes_mapping_and_logs_info(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """
+        arrange: Mapping secret references a relation_id that no longer exists.
+        act: Fire certificate_available.
+        assert: INFO is logged; mapping secret is revoked; no exception raised.
+        """
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(csr_pem, old_relation_id=9999)
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+
+        state_in = ops.testing.State(
+            relations={upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        with caplog.at_level(logging.INFO):
+            out = context.run(
+                context.on.custom(
+                    _CERT_AVAILABLE_EVENT,
+                    certificate=cert,
+                    certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                    ca=ca_certificate,
+                    chain=[ca_certificate],
+                ),
+                state_in,
+            )
+
+        assert any("no longer exists" in r.message for r in caplog.records)
+        mapping_labels = {s.label for s in out.secrets if s.label == mapping_secret.label}
+        assert mapping_labels == set()

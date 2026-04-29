@@ -10,10 +10,10 @@ Separates old-interface relation data serialisation from the event handler, keep
 
 ## Acceptance Criteria
 
-- [ ] `write_certificate()` writes the correct key (`{unit_name_with_slashes_replaced}.processed_requests`) to the unit databag.
-- [ ] The value is a JSON list containing a single object with keys `cert_type`, `common_name`, `cert`, and `key`.
-- [ ] Calling `write_certificate()` twice for the same unit overwrites (not appends) the entry.
-- [ ] Unit tests verify the databag content using `ops[testing]`.
+- [x] `write_certificate()` writes the correct key (`{unit_name_with_slashes_replaced}.processed_requests`) to the unit databag.
+- [x] The value is a JSON list containing a single object with keys `cert_type`, `common_name`, `cert`, and `key`.
+- [x] Calling `write_certificate()` twice for the same unit overwrites (not appends) the entry.
+- [x] Unit tests verify the databag content using `ops[testing]`.
 
 ## Files
 
@@ -29,6 +29,6 @@ Separates old-interface relation data serialisation from the event handler, keep
 
 ## Work items
 
-- [ ] Code changes
-- [ ] Local testing
-- [ ] Commit changes
+- [x] Code changes
+- [x] Local testing
+- [x] Commit changes
