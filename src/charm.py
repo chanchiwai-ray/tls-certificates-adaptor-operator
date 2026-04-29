@@ -22,7 +22,6 @@ from crypto import build_csr
 from secret import get_csr_mapping, get_or_generate_private_key, store_csr_mapping
 from state import CharmBaseWithState, CharmState
 
-# Log messages can be retrieved using juju debug-log
 logger = logging.getLogger(__name__)
 
 
@@ -44,50 +43,42 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         """
         super().__init__(*args)
 
-        # Retrieve (or generate) the stable RSA private key for this unit.
-        # This single key is reused for all upstream CSRs so that certificate
-        # fingerprints remain stable across charm restarts and events.
         self._charm_key_pem = get_or_generate_private_key(self)
-        charm_key = PrivateKey.from_string(self._charm_key_pem)
 
-        # Build the current list of CertificateRequestAttributes from the
-        # pending old-interface requests so the upstream library can send
-        # them to the upstream TLS provider.
-        state = CharmState.from_charm(self)
-        cert_request_attrs = [
-            CertificateRequestAttributes(
-                common_name=cr.common_name,
-                sans_dns=cr.sans_dns if cr.sans_dns else None,
-                add_unique_id_to_subject_name=False,
-            )
-            for cr in state.certificate_requests
-        ]
+        # Build CertificateRequestAttributes from the current old-interface
+        # requests so the upstream library sends them on initialisation.
+        cert_request_attrs = []
+        if state := self.state:
+            cert_request_attrs = [
+                CertificateRequestAttributes(
+                    common_name=cr.common_name,
+                    sans_dns=cr.sans_dns if cr.sans_dns else None,
+                    add_unique_id_to_subject_name=False,
+                )
+                for cr in state.certificate_requests
+            ]
 
-        # Initialise the upstream TLS library with the current pending
-        # requests and our stable private key.  Pass the old-interface
-        # relation_changed event as a refresh trigger so the library
-        # re-sends the updated CSR list whenever an old requirer changes.
         self.tls_certificates = TLSCertificatesRequiresV4(
             charm=self,
             relationship_name=UPSTREAM_RELATION_NAME,
             certificate_requests=cert_request_attrs,
-            private_key=charm_key,
+            private_key=PrivateKey.from_string(self._charm_key_pem),
             refresh_events=[self.on[OLD_INTERFACE_RELATION_NAME].relation_changed],
         )
 
-        self.framework.observe(self.on.install, self._on_install)
-        self.framework.observe(self.on.config_changed, self._on_config_changed)
+        self.framework.observe(self.on.install, self.reconcile)
+        self.framework.observe(self.on.config_changed, self.reconcile)
         self.framework.observe(
             self.on[OLD_INTERFACE_RELATION_NAME].relation_changed,
             self._on_certificates_relation_changed,
         )
         self.framework.observe(
             self.on[OLD_INTERFACE_RELATION_NAME].relation_broken,
-            self._on_certificates_relation_broken,
+            self.reconcile,
         )
         self.framework.observe(
             self.on[UPSTREAM_RELATION_NAME].relation_joined,
-            self._on_certificates_upstream_relation_joined,
+            self.reconcile,
         )
 
     @property
@@ -96,36 +87,28 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         return CharmState.from_charm(self)
 
     def reconcile(self, _: ops.HookEvent | None = None) -> None:
-        """Holistic reconciliation method.
+        """Evaluate current state and set unit status.
 
-        Evaluates the current charm state and sets unit status accordingly.
-        This method is idempotent and called from every event handler.
+        Called from every event handler.  Sets WaitingStatus until the
+        upstream TLS provider relation exists, then ActiveStatus.
         """
         if not self.model.relations[UPSTREAM_RELATION_NAME]:
             self.unit.status = ops.WaitingStatus("Waiting for upstream TLS provider")
             return
         self.unit.status = ops.ActiveStatus()
 
-    def _on_install(self, event: ops.InstallEvent) -> None:
-        """Handle install event."""
-        self.reconcile(event)
-
-    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
-        """Handle changed configuration."""
-        self.reconcile(event)
-
     def _on_certificates_relation_changed(self, event: ops.RelationChangedEvent) -> None:
-        """Handle old-interface relation changed.
+        """Store a CSR mapping secret for each new old-interface certificate request.
 
-        For each new CertificateRequest that does not yet have a mapping
-        secret, build the deterministic CSR from the charm's stable key and
-        the request attributes, then store a mapping secret with the requirer
-        information.  The upstream TLS library (initialised in ``__init__``)
-        picks up the updated CSR list automatically via the ``refresh_events``
-        hook.
+        For each CertificateRequest that does not yet have a mapping secret,
+        builds a deterministic CSR from the charm's stable private key and
+        the request attributes, then persists a mapping secret keyed by the
+        CSR fingerprint.  The upstream TLS library picks up the updated CSR
+        list automatically via the ``refresh_events`` hook registered in
+        ``__init__``.  Already-mapped requests are skipped (idempotent).
         """
-        state = CharmState.from_charm(self)
-        for cr in state.certificate_requests:
+        state = self.state
+        for cr in state.certificate_requests if state else []:
             csr_pem = build_csr(self._charm_key_pem, cr.common_name, cr.sans_dns)
             if get_csr_mapping(self, csr_pem) is not None:
                 logger.debug(
@@ -147,19 +130,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 cr.requirer_unit_name,
                 cr.relation_id,
             )
-        self.reconcile(event)
-
-    def _on_certificates_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
-        """Handle old-interface relation broken."""
-        self.reconcile(event)
-
-    def _on_certificates_upstream_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
-        """Handle upstream TLS provider relation joined.
-
-        The upstream TLS library's ``_configure`` fires automatically on
-        relation events and re-sends all pending CSRs.  This handler updates
-        the unit status via ``reconcile()``.
-        """
         self.reconcile(event)
 
 
