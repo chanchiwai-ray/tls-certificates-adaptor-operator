@@ -11,6 +11,7 @@ import ops.testing
 import pytest
 from charmlibs.interfaces.tls_certificates import (
     Certificate,
+    CertificateError,
     CertificateSigningRequest,
     PrivateKey,
     TLSCertificatesRequiresV4,
@@ -19,6 +20,7 @@ from charmlibs.interfaces.tls_certificates import (
 from charm import TLSCertificateAdaptorCharm
 from constants import (
     CHARM_PRIVATE_KEY_SECRET_LABEL,
+    CSR_FINGERPRINTS_KEY,
     JUJU_SECRET_LABEL_PREFIX,
     OLD_INTERFACE_RELATION_NAME,
     UPSTREAM_RELATION_NAME,
@@ -31,6 +33,7 @@ _TEST_KEY_PEM = generate_private_key()
 
 # Class-level access to ObjectEvents is not fully typed; suppress the mypy warning once.
 _CERT_AVAILABLE_EVENT = TLSCertificatesRequiresV4.on.certificate_available  # type: ignore[arg-type]
+_CERT_DENIED_EVENT = TLSCertificatesRequiresV4.on.certificate_denied  # type: ignore[arg-type]
 
 
 @pytest.fixture()
@@ -362,7 +365,7 @@ class TestCertificateAvailableDelivery:
         assert payload[0]["common_name"] == "keystone.internal"
         assert payload[0]["cert_type"] == "server"
 
-    def test_mapping_secret_revoked_after_delivery(
+    def test_mapping_secret_persists_after_delivery(
         self,
         context: ops.testing.Context,
         key_secret: ops.testing.Secret,
@@ -372,7 +375,7 @@ class TestCertificateAvailableDelivery:
         """
         arrange: A CSR mapping secret exists.
         act: Fire certificate_available for that CSR.
-        assert: The mapping secret no longer appears in the output state.
+        assert: The mapping secret is retained so that renewal can reuse it.
         """
         old_relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
@@ -400,7 +403,7 @@ class TestCertificateAvailableDelivery:
         )
 
         mapping_labels = {s.label for s in out.secrets if s.label == mapping_secret.label}
-        assert mapping_labels == set()
+        assert mapping_labels == {mapping_secret.label}
 
     def test_missing_mapping_secret_logs_error_and_skips(
         self,
@@ -477,3 +480,231 @@ class TestCertificateAvailableDelivery:
         assert any("no longer exists" in r.message for r in caplog.records)
         mapping_labels = {s.label for s in out.secrets if s.label == mapping_secret.label}
         assert mapping_labels == set()
+
+
+class TestCertificateDenied:
+    """Tests for _on_certificate_denied (PR 004)."""
+
+    def _build_mapping_secret(self, csr_pem: str, old_relation_id: int) -> ops.testing.Secret:
+        """Build a pre-populated CSR mapping secret for the given CSR."""
+        label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
+        return ops.testing.Secret(
+            label=label,
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/0",
+                "relation-id": str(old_relation_id),
+            },
+        )
+
+    def test_denied_revokes_mapping_and_logs_error(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """
+        arrange: A CSR mapping secret exists for a pending request.
+        act: Fire certificate_denied for that CSR.
+        assert: Mapping secret is revoked; ERROR is logged.
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(csr_pem, old_relation_id=1)
+        error = CertificateError(code=400, name="BadRequest", message="Invalid CSR")
+
+        state_in = ops.testing.State(secrets={key_secret, mapping_secret})
+
+        with caplog.at_level(logging.ERROR):
+            out = context.run(
+                context.on.custom(
+                    _CERT_DENIED_EVENT,
+                    certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                    error=error,
+                ),
+                state_in,
+            )
+
+        assert any("denied" in r.message.lower() for r in caplog.records)
+        mapping_labels = {s.label for s in out.secrets if s.label == mapping_secret.label}
+        assert mapping_labels == set()
+
+    def test_denied_with_missing_mapping_logs_warning(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """
+        arrange: No CSR mapping secret exists.
+        act: Fire certificate_denied.
+        assert: WARNING is logged; charm does not raise.
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        error = CertificateError(code=400, name="BadRequest", message="Invalid CSR")
+
+        state_in = ops.testing.State(secrets={key_secret})
+
+        with caplog.at_level(logging.WARNING):
+            context.run(
+                context.on.custom(
+                    _CERT_DENIED_EVENT,
+                    certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                    error=error,
+                ),
+                state_in,
+            )
+
+        assert any("already cleaned up" in r.message for r in caplog.records)
+
+
+class TestCertificatesRelationBroken:
+    """Tests for _on_certificates_relation_broken (PR 004)."""
+
+    def test_relation_broken_revokes_mapping_secrets(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+    ):
+        """
+        arrange: One old-interface relation with fingerprints stored in local unit data;
+                 corresponding mapping secrets exist.
+        act: Fire certificates_relation_broken for that relation.
+        assert: All mapping secrets for the relation are revoked.
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        fingerprint = csr_sha256_hex(csr_pem)
+        mapping_label = f"{JUJU_SECRET_LABEL_PREFIX}{fingerprint}"
+        mapping_secret = ops.testing.Secret(
+            label=mapping_label,
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/0",
+                "relation-id": "1",
+            },
+        )
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            local_unit_data={CSR_FINGERPRINTS_KEY: json.dumps([fingerprint])},
+        )
+
+        state_in = ops.testing.State(
+            relations={old_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(context.on.relation_broken(old_relation), state_in)
+
+        remaining = {s.label for s in out.secrets if s.label == mapping_label}
+        assert remaining == set()
+
+    def test_relation_broken_other_relations_unaffected(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+    ):
+        """
+        arrange: Two old-interface relations, each with their own mapping secrets.
+        act: Fire certificates_relation_broken for one relation.
+        assert: Only that relation's mapping secret is revoked; the other remains.
+        """
+        csr_a = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        csr_b = build_csr(_TEST_KEY_PEM, "nova.internal", ["nova.internal"])
+        fp_a = csr_sha256_hex(csr_a)
+        fp_b = csr_sha256_hex(csr_b)
+
+        label_a = f"{JUJU_SECRET_LABEL_PREFIX}{fp_a}"
+        label_b = f"{JUJU_SECRET_LABEL_PREFIX}{fp_b}"
+
+        secret_a = ops.testing.Secret(
+            label=label_a,
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/0",
+                "relation-id": "1",
+            },
+        )
+        secret_b = ops.testing.Secret(
+            label=label_b,
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "nova/0",
+                "relation-id": "2",
+            },
+        )
+        relation_a = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            local_unit_data={CSR_FINGERPRINTS_KEY: json.dumps([fp_a])},
+        )
+        relation_b = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="nova",
+            local_unit_data={CSR_FINGERPRINTS_KEY: json.dumps([fp_b])},
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+
+        state_in = ops.testing.State(
+            relations={relation_a, relation_b, upstream_relation},
+            secrets={key_secret, secret_a, secret_b},
+        )
+
+        out = context.run(context.on.relation_broken(relation_a), state_in)
+
+        remaining_labels = {s.label for s in out.secrets}
+        assert label_a not in remaining_labels
+        assert label_b in remaining_labels
+
+    def test_relation_broken_already_cleaned_mapping_is_skipped(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """
+        arrange: Relation has fingerprints stored but the mapping secret is already gone.
+        act: Fire certificates_relation_broken.
+        assert: Charm does not raise; debug message logged.
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        fingerprint = csr_sha256_hex(csr_pem)
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            local_unit_data={CSR_FINGERPRINTS_KEY: json.dumps([fingerprint])},
+        )
+
+        state_in = ops.testing.State(
+            relations={old_relation},
+            secrets={key_secret},
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            context.run(context.on.relation_broken(old_relation), state_in)
+
+        assert any("already gone" in r.message for r in caplog.records)
+
+    def test_relation_broken_no_fingerprints_stored(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+    ):
+        """
+        arrange: Relation broken before any cert_requests were processed (no fingerprints key).
+        act: Fire certificates_relation_broken.
+        assert: Charm does not raise; no secrets changed.
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+
+        state_in = ops.testing.State(relations={old_relation}, secrets={key_secret})
+
+        out = context.run(context.on.relation_broken(old_relation), state_in)
+
+        assert len(out.secrets) == len(state_in.secrets)
