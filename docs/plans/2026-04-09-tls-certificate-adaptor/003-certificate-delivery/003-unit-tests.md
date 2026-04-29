@@ -10,11 +10,11 @@ The certificate delivery path spans the most modules (state, crypto, secret, cha
 
 ## Acceptance Criteria
 
-- [ ] End-to-end test: simulate `certificates_relation_changed` followed by `certificate_available`; assert old-interface unit databag contains expected cert and key.
-- [ ] Secret cleanup test: after delivery, assert the mapping secret no longer exists.
-- [ ] Missing-secret test: assert charm does not raise; ERROR is logged.
-- [ ] Stale-relation test: delivery arrives after old-interface relation is broken; assert INFO logged, secret revoked, no error.
-- [ ] `tox -e unit` passes; coverage ≥ 90% for all modules touched in PR 003.
+- [x] End-to-end test: simulate `certificates_relation_changed` followed by `certificate_available`; assert old-interface unit databag contains expected cert and key.
+- [x] Secret cleanup test: after delivery, assert the mapping secret no longer exists.
+- [x] Missing-secret test: assert charm does not raise; ERROR is logged.
+- [x] Stale-relation test: delivery arrives after old-interface relation is broken; assert INFO logged, secret revoked, no error.
+- [x] `tox -e unit` passes; coverage ≥ 90% for all modules touched in PR 003.
 
 ## Files
 
@@ -29,6 +29,6 @@ The certificate delivery path spans the most modules (state, crypto, secret, cha
 
 ## Work items
 
-- [ ] Code changes
-- [ ] Local testing
-- [ ] Commit changes
+- [x] Code changes
+- [x] Local testing
+- [x] Commit changes

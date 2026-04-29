@@ -10,10 +10,10 @@ This is the certificate delivery step — the observable end-to-end outcome of t
 
 ## Acceptance Criteria
 
-- [ ] After `certificate_available`, the old-interface requirer's unit databag contains `{unit}_0.processed_requests` with the correct cert and key.
-- [ ] The mapping Juju Secret is revoked after successful delivery.
-- [ ] If the mapping secret is not found (e.g. after unexpected restart), the event is logged at ERROR and skipped gracefully — the charm does not crash.
-- [ ] Unit tests cover: happy path → cert delivered + secret revoked; missing mapping secret → graceful error log.
+- [x] After `certificate_available`, the old-interface requirer's unit databag contains `{unit}_0.processed_requests` with the correct cert and key.
+- [x] The mapping Juju Secret is revoked after successful delivery.
+- [x] If the mapping secret is not found (e.g. after unexpected restart), the event is logged at ERROR and skipped gracefully — the charm does not crash.
+- [x] Unit tests cover: happy path → cert delivered + secret revoked; missing mapping secret → graceful error log.
 
 ## Files
 
@@ -29,6 +29,6 @@ This is the certificate delivery step — the observable end-to-end outcome of t
 
 ## Work items
 
-- [ ] Code changes
-- [ ] Local testing
-- [ ] Commit changes
+- [x] Code changes
+- [x] Local testing
+- [x] Commit changes
