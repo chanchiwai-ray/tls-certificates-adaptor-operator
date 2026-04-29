@@ -19,6 +19,12 @@ def get_or_generate_private_key(charm: ops.CharmBase) -> str:
     The key is stored in a unit-owned Juju Secret so that the same key is
     reused across charm restarts and events.  All CSR mapping secrets and the
     upstream library use this single key.
+
+    Args:
+        charm (ops.CharmBase): The charm instance used to access the model and unit.
+
+    Returns:
+        str: PEM-encoded RSA private key.
     """
     try:
         secret = charm.model.get_secret(label=CHARM_PRIVATE_KEY_SECRET_LABEL)
@@ -45,6 +51,13 @@ def store_csr_mapping(
     The secret is labelled ``tls-adaptor-{csr_sha256_hex}`` and stores the
     private key and old-interface requirer information needed for certificate
     delivery.  The secret is never granted to any other application.
+
+    Args:
+        charm (ops.CharmBase): The charm instance used to access the unit.
+        csr_pem (str): PEM-encoded CSR whose fingerprint is used as the secret label suffix.
+        private_key_pem (str): PEM-encoded private key to store in the secret.
+        requirer_unit (str): The old-interface requirer unit name (e.g. ``keystone/0``).
+        relation_id (int): The old-interface relation ID.
     """
     label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
     charm.unit.add_secret(
@@ -61,7 +74,12 @@ def store_csr_mapping(
 def get_csr_mapping(charm: ops.CharmBase, csr_pem: str) -> dict[str, str] | None:
     """Look up the mapping secret for a CSR by its SHA-256 fingerprint.
 
-    Returns the secret content dict, or ``None`` if no matching secret exists.
+    Args:
+        charm (ops.CharmBase): The charm instance used to access the model.
+        csr_pem (str): PEM-encoded CSR whose fingerprint identifies the secret.
+
+    Returns:
+        dict[str, str] | None: The secret content dict, or ``None`` if no matching secret exists.
     """
     label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
     try:
@@ -72,7 +90,12 @@ def get_csr_mapping(charm: ops.CharmBase, csr_pem: str) -> dict[str, str] | None
 
 
 def revoke_csr_mapping(charm: ops.CharmBase, csr_pem: str) -> None:
-    """Remove the mapping secret for a CSR.  No-op if the secret does not exist."""
+    """Remove the mapping secret for a CSR.  No-op if the secret does not exist.
+
+    Args:
+        charm (ops.CharmBase): The charm instance used to access the model.
+        csr_pem (str): PEM-encoded CSR whose fingerprint identifies the secret to remove.
+    """
     label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
     try:
         secret = charm.model.get_secret(label=label)
