@@ -8,7 +8,7 @@
 import ops
 import ops.testing
 
-from charm import Charm
+from charm import TLSCertificateAdaptorCharm
 
 
 def test_reconcile_on_install():
@@ -17,7 +17,7 @@ def test_reconcile_on_install():
     act: Run the install hook.
     assert: The unit is active.
     """
-    context = ops.testing.Context(charm_type=Charm)
+    context = ops.testing.Context(charm_type=TLSCertificateAdaptorCharm)
     state_in = ops.testing.State()
     state_out = context.run(context.on.install(), state_in)
     assert state_out.unit_status == ops.ActiveStatus()
@@ -29,7 +29,7 @@ def test_reconcile_on_config_changed():
     act: Run the config_changed hook.
     assert: The unit is active.
     """
-    context = ops.testing.Context(charm_type=Charm)
+    context = ops.testing.Context(charm_type=TLSCertificateAdaptorCharm)
     state_in = ops.testing.State()
     state_out = context.run(context.on.config_changed(), state_in)
     assert state_out.unit_status == ops.ActiveStatus()

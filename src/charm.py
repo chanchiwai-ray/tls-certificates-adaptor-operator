@@ -22,7 +22,7 @@ import ops
 logger = logging.getLogger(__name__)
 
 
-class Charm(ops.CharmBase):
+class TLSCertificateAdaptorCharm(ops.CharmBase):
     """Charm implementing holistic reconciliation pattern.
 
     The holistic pattern centralizes all state reconciliation logic into a single
@@ -61,4 +61,4 @@ class Charm(ops.CharmBase):
 
 
 if __name__ == "__main__":  # pragma: nocover
-    ops.main(Charm)
+    ops.main(TLSCertificateAdaptorCharm)
