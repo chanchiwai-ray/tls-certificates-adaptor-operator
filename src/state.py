@@ -7,15 +7,12 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import ops
 from pydantic import BaseModel, ConfigDict
 
 from constants import OLD_INTERFACE_RELATION_NAME
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +48,7 @@ class CharmState(BaseModel):
     issued_certificates: dict[str, IssuedCertificate]  # keyed by common_name
 
     @classmethod
-    def from_charm(cls, charm: ops.CharmBase) -> "CharmState":
+    def from_charm(cls, charm: ops.CharmBase) -> CharmState:
         """Build a CharmState by aggregating all active old-interface certificate requests.
 
         Args:
@@ -61,7 +58,7 @@ class CharmState(BaseModel):
             A CharmState with all pending certificate requests.
         """
         # Local import to avoid circular dependency with certificate_provider
-        from certificate_provider import get_certificate_requests  # noqa: PLC0415
+        from certificate_provider import get_certificate_requests
 
         requests: list[CertificateRequest] = []
         for relation in charm.model.relations[OLD_INTERFACE_RELATION_NAME]:

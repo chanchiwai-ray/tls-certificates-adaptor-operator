@@ -11,7 +11,6 @@ import ops.testing
 import pytest
 
 from charm import TLSCertificateAdaptorCharm
-from constants import OLD_INTERFACE_RELATION_NAME
 
 
 @pytest.fixture()
