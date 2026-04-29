@@ -5,17 +5,17 @@ Spec: [docs/specs/2026-04-09-tls-certificate-adaptor/spec.md](../../specs/2026-0
 
 ## PRs
 
-- [ ] PR 001 — Foundation and old-interface parsing: tasks 001, 002, 003, 004
+- [x] PR 001 — Foundation and old-interface parsing: tasks 001, 002, 003, 004
 - [ ] PR 002 — CSR generation and upstream forwarding: tasks 001, 002, 003, 004, 005
 - [ ] PR 003 — Certificate delivery: tasks 001, 002, 003
 - [ ] PR 004 — Renewal and cleanup: tasks 001, 002, 003
 
 ## Task checklist
 
-- [ ] `001-foundation/001-project-setup` — Add dependency, create `constants.py`, rename charm class
-- [ ] `001-foundation/002-certificate-provider-read` — Create `certificate_provider.py` with old-interface read logic
-- [ ] `001-foundation/003-state-model` — Create `state.py` with `CertificateRequest`, `IssuedCertificate`, `CharmState`
-- [ ] `001-foundation/004-wire-charm-events` — Observe old-interface relation events in `charm.py`, set unit status
+- [x] `001-foundation/001-project-setup` — Add dependency, create `constants.py`, rename charm class
+- [x] `001-foundation/002-certificate-provider-read` — Create `certificate_provider.py` with old-interface read logic
+- [x] `001-foundation/003-state-model` — Create `state.py` with `CertificateRequest`, `IssuedCertificate`, `CharmState`
+- [x] `001-foundation/004-wire-charm-events` — Observe old-interface relation events in `charm.py`, set unit status
 - [ ] `002-csr-forwarding/001-crypto-helpers` — RSA key generation and CSR building utilities
 - [ ] `002-csr-forwarding/002-secret-mapping` — Create, look up, and revoke per-CSR Juju Secrets
 - [ ] `002-csr-forwarding/003-wire-relation-changed` — Handle `certificates_relation_changed`
