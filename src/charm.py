@@ -172,8 +172,10 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         """Deliver a signed certificate to the old-interface requirer.
 
         Looks up the per-CSR mapping secret, writes cert + key + CA to the
-        old-interface requirer's relation databag, then revokes the mapping
-        secret.  Logs an error and skips gracefully if the mapping is missing.
+        old-interface requirer's relation databag.  The mapping secret is
+        intentionally retained so that library-managed renewal can reuse it
+        when the same CSR fingerprint fires a new ``certificate_available``.
+        Logs an error and skips gracefully if the mapping is missing.
         If the old-interface relation is gone, revokes the mapping and logs
         at INFO.
         """
