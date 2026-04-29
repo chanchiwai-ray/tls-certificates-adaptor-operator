@@ -6,14 +6,17 @@ name = "tls-certificate-adaptor"
 version = "0.0.0"
 description = "Bridges the legacy reactive tls-certificates interface with the modern tls-certificates-interface used by vault-k8s."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+  "charmlibs-interfaces-tls-certificates>=1.8.1",
   "ops==3.6.0",
 ]
 

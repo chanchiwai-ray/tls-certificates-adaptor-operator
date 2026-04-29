@@ -5,31 +5,28 @@
 
 # Learn more at: https://documentation.ubuntu.com/juju/3.6/howto/manage-charms/#build-a-charm
 
-"""Charm the service.
-
-Refer to the following post for a quick-start guide that will help you
-develop a new k8s charm using the Operator Framework:
-
-https://discourse.charmhub.io/t/4208
-"""
+"""TLS Certificate Adaptor charm."""
 
 import logging
 import typing
 
 import ops
 
+from constants import OLD_INTERFACE_RELATION_NAME, UPSTREAM_RELATION_NAME
+from state import CharmBaseWithState, CharmState
+
 # Log messages can be retrieved using juju debug-log
 logger = logging.getLogger(__name__)
 
 
-class Charm(ops.CharmBase):
-    """Charm implementing holistic reconciliation pattern.
+class TLSCertificateAdaptorCharm(CharmBaseWithState):
+    """TLS Certificate Adaptor implementing holistic reconciliation pattern.
 
-    The holistic pattern centralizes all state reconciliation logic into a single
-    reconcile method that is called from all event handlers. This ensures consistency
-    and reduces code duplication.
+    Bridges the legacy reactive tls-certificates interface with the modern
+    tls-certificates-interface (charmlibs) used by vault-k8s or lego-k8s.
+
     See https://documentation.ubuntu.com/ops/latest/explanation/holistic-vs-delta-charms/
-    for more information.
+    for more information on the holistic reconcile pattern.
     """
 
     def __init__(self, *args: typing.Any):
@@ -41,24 +38,47 @@ class Charm(ops.CharmBase):
         super().__init__(*args)
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
+        self.framework.observe(
+            self.on[OLD_INTERFACE_RELATION_NAME].relation_changed,
+            self._on_certificates_relation_changed,
+        )
+        self.framework.observe(
+            self.on[OLD_INTERFACE_RELATION_NAME].relation_broken,
+            self._on_certificates_relation_broken,
+        )
 
-    def reconcile(self) -> None:
+    @property
+    def state(self) -> CharmState | None:
+        """The charm state."""
+        return CharmState.from_charm(self)
+
+    def reconcile(self, _: ops.HookEvent | None = None) -> None:
         """Holistic reconciliation method.
 
-        This method contains all the logic needed to reconcile the charm state.
-        It is idempotent and can be called from any event handler.
+        Evaluates the current charm state and sets unit status accordingly.
+        This method is idempotent and called from every event handler.
         """
-        # TODO: implement charm reconciliation logic here
+        if not self.model.relations[UPSTREAM_RELATION_NAME]:
+            self.unit.status = ops.WaitingStatus("Waiting for upstream TLS provider")
+            return
         self.unit.status = ops.ActiveStatus()
 
-    def _on_install(self, _: ops.InstallEvent) -> None:
+    def _on_install(self, event: ops.InstallEvent) -> None:
         """Handle install event."""
-        self.reconcile()
+        self.reconcile(event)
 
-    def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle changed configuration."""
-        self.reconcile()
+        self.reconcile(event)
+
+    def _on_certificates_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Handle old-interface relation changed."""
+        self.reconcile(event)
+
+    def _on_certificates_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
+        """Handle old-interface relation broken."""
+        self.reconcile(event)
 
 
 if __name__ == "__main__":  # pragma: nocover
-    ops.main(Charm)
+    ops.main(TLSCertificateAdaptorCharm)
