@@ -11,8 +11,9 @@ from abc import ABC, abstractmethod
 import ops
 from pydantic import BaseModel, ConfigDict
 
-from certificate_provider import CertificateRequest, IssuedCertificate, get_certificate_requests
-from constants import OLD_INTERFACE_RELATION_NAME
+from models import CertificateRequest, IssuedCertificate  # noqa: TC001
+from new_tls_certificate import NewTLSCertificatesRelation  # noqa: TC001
+from old_tls_certificate import OldTLSCertificatesRelation  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +27,32 @@ class CharmState(BaseModel):
     issued_certificates: dict[str, IssuedCertificate]  # keyed by CSR SHA-256 hex fingerprint
 
     @classmethod
-    def from_charm(cls, charm: ops.CharmBase) -> CharmState:
-        """Build a CharmState by aggregating all active old-interface certificate requests.
+    def from_charm(
+        cls,
+        old_handler: OldTLSCertificatesRelation,
+        upstream: NewTLSCertificatesRelation,
+    ) -> CharmState:
+        """Build a CharmState from pre-constructed relation handlers.
+
+        Accepts handlers rather than a raw charm instance so that the state
+        module has no direct dependency on how the handlers are constructed
+        (dependency injection).
 
         Args:
-            charm: The charm instance.
+            old_handler: Handler for all active old-interface (v1) relations.
+                Reads cert requests from all remote-unit databags across every
+                active relation.
+            upstream: Handler for the modern upstream tls-certificates (v4)
+                relation.  Provides currently-issued certificates.
 
         Returns:
-            A CharmState with all pending certificate requests.
+            A CharmState with all pending certificate requests and currently
+            issued certificates.
         """
-        requests: list[CertificateRequest] = []
-        for relation in charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
-            requests.extend(get_certificate_requests(relation))
-        return cls(certificate_requests=requests, issued_certificates={})
+        return cls(
+            certificate_requests=old_handler.get_certificate_requests(),
+            issued_certificates=upstream.get_issued_certificates(),
+        )
 
 
 class CharmBaseWithState(ops.CharmBase, ABC):

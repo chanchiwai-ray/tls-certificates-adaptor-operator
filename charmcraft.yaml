@@ -11,9 +11,15 @@ links:
 
 description: |
   A machine charm that bridges the legacy reactive tls-certificates interface
-  (Charmed OpenStack, Yoga and earlier) with the modern tls-certificates-interface
-  used by vault-k8s, enabling Charmed OpenStack services to obtain TLS certificates
-  from vault-k8s without modification to either side.
+  (v1, Charmed OpenStack Yoga and earlier) with the modern tls-certificates-interface
+  (v4, TLSCertificatesRequiresV4) used by vault-k8s and lego-k8s, enabling
+  Charmed OpenStack services to obtain TLS certificates from modern providers
+  without modification to either side.
+
+  The charm provides the old v1 tls-certificates interface to downstream
+  OpenStack services via the ``certificates`` relation, and consumes the new v4
+  tls-certificates interface from an upstream TLS provider via the
+  ``certificates-upstream`` relation.
 
 platforms:
   ubuntu@22.04:amd64:

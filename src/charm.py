@@ -16,12 +16,8 @@ import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
     CertificateDeniedEvent,
-    CertificateRequestAttributes,
-    PrivateKey,
-    TLSCertificatesRequiresV4,
 )
 
-from certificate_provider import write_certificate
 from constants import (
     CSR_FINGERPRINTS_KEY,
     JUJU_SECRET_LABEL_PREFIX,
@@ -29,6 +25,8 @@ from constants import (
     UPSTREAM_RELATION_NAME,
 )
 from crypto import build_csr, csr_sha256_hex
+from new_tls_certificate import NewTLSCertificatesRelation
+from old_tls_certificate import OldTLSCertificatesRelation
 from secret import (
     get_csr_mapping,
     get_or_generate_private_key,
@@ -61,26 +59,13 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         self._state: CharmState | None = None
         self._charm_key_pem = get_or_generate_private_key(self)
 
-        # Build CertificateRequestAttributes from the current old-interface
-        # requests so the upstream library sends them on initialisation.
-        cert_request_attrs = []
-        if state := self.state:
-            cert_request_attrs = [
-                CertificateRequestAttributes(
-                    common_name=cr.common_name,
-                    sans_dns=cr.sans_dns if cr.sans_dns else None,
-                    add_unique_id_to_subject_name=False,
-                )
-                for cr in state.certificate_requests
-            ]
-
-        self.tls_certificates = TLSCertificatesRequiresV4(
-            charm=self,
-            relationship_name=UPSTREAM_RELATION_NAME,
-            certificate_requests=cert_request_attrs,
-            private_key=PrivateKey.from_string(self._charm_key_pem),
-            refresh_events=[self.on[OLD_INTERFACE_RELATION_NAME].relation_changed],
+        self._old_handler = OldTLSCertificatesRelation(self)
+        self._upstream_handler = NewTLSCertificatesRelation(
+            self,
+            self._old_handler.get_certificate_requests(),
+            self._charm_key_pem,
         )
+        self.tls_certificates = self._upstream_handler.tls_certificates
 
         self.framework.observe(self.on.install, self.reconcile)
         self.framework.observe(self.on.config_changed, self.reconcile)
@@ -109,7 +94,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
     def state(self) -> CharmState | None:
         """The charm state, computed once per event and cached for the lifetime of this instance."""
         if self._state is None:
-            self._state = CharmState.from_charm(self)
+            self._state = CharmState.from_charm(self._old_handler, self._upstream_handler)
         return self._state
 
     def reconcile(self, _: ops.HookEvent | None = None) -> None:
@@ -204,9 +189,8 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             revoke_csr_mapping(self, csr_pem)
             return
 
-        write_certificate(
-            relation=relation,
-            charm_unit=self.unit,
+        self._old_handler.write_certificate(
+            relation_id=relation_id,
             requirer_unit_name=requirer_unit_name,
             common_name=str(event.certificate.common_name),
             cert=str(event.certificate),

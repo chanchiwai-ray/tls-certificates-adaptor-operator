@@ -57,26 +57,31 @@ The main charm module coordinates the overall charm behavior:
 The state module provides a single source of truth for all charm data:
 
 - Aggregates charm configuration options
-- Collects data from relation libraries
+- Collects data from relation handlers passed in as arguments (dependency injection — no direct class instantiation inside `from_charm`)
 - Validates and transforms data into a consistent format using Pydantic models
 - Provides a `CharmState` object that represents the complete desired state
-- Wraps a `CharmBase` object with a `CharmStateWithState` that includes the state as an attribute for easy access in relation libraries
+- Wraps a `CharmBase` object with a `CharmBaseWithState` that includes the state as an attribute for easy access in relation libraries
 
 ```python
 class CharmState(BaseModel):
-  """The pydantic model for charm state.
-
-  Charm state encapsulates all the data about the charm, including config, secret and relation
-  data. It is the single source of truth for the charm.
-  """
+  # fields populated from relation handlers and config
 
   @classmethod
-  def from_charm(cls, charm: ops.CharmBase, ...) -> "CharmState":
-    """Create a CharmState from a CharmBase instance."""
+  def from_charm(
+    cls,
+    <relation-handler-a>: RelationHandlerA,
+    <relation-handler-b>: RelationHandlerB,
+    # ... other handlers / config
+  ) -> "CharmState":
+    # Collect data by calling methods on the injected handlers.
+    # Never instantiate handler classes here; accept them as arguments.
+    data_a = relation_handler_a.get_data()
+    data_b = relation_handler_b.get_data()
+    return cls(field_a=data_a, field_b=data_b)
 
 
 class CharmBaseWithState(ops.CharmBase, ABC):
-  """The CharmBase than can build a CharmState."""
+  """The CharmBase that can build a CharmState."""
 
   @property
   @abstractmethod
@@ -92,11 +97,16 @@ Example usage with caching of `CharmState` in `charm.py`:
 
 ```python
 class MyCharm(CharmBaseWithState):
-  ...
+  def __init__(self, *args):
+    super().__init__(*args)
+    # Handlers are constructed in __init__ so they exist before state is accessed.
+    self.handler_a = RelationHandlerA(...)
+    self.handler_b = RelationHandlerB(...)
+
   @property
   def state(self) -> CharmState | None:
     if self._state is None:
-      self._state = CharmState.from_charm(self)
+      self._state = CharmState.from_charm(self.handler_a, self.handler_b)
     return self._state
 ```
 
@@ -146,7 +156,53 @@ Utility modules provide shared functionality such as constants, logging, and com
 
 ### Relation handlers
 
-These libraries abstract the complexity of relation data exchange and provide clean interfaces for the charm to use.
+Relation handlers encapsulate all read/write logic for a relation endpoint and are passed into `CharmState.from_charm` as arguments (dependency injection). This keeps `state.py` free of direct imports of handler classes and makes the state straightforward to test with mock handlers.
+
+Each handler is constructed in `charm.py`'s `__init__` and receives the charm instance as its first argument. The handler stores `self._charm` and instantiates any third-party library or performs any relation look-up **inside `__init__`** — not outside. `state.py` never needs to know how relations are looked up or how libraries are initialised.
+
+```python
+from ... import RelationLibrary
+
+class <RelationHandler>:
+  """Encapsulates read/write access to a relation endpoint."""
+
+  def __init__(self, charm: ops.CharmBase, <other_dependencies>) -> None:
+    self._charm = charm
+    # Instantiate the library or bind the relation here, not in charm.py.
+    self._lib = RelationLibrary(charm, <other_dependencies>)
+
+  def get_<data>(self) -> <DataModel> | None:
+    # Read and parse data from the relation databag or library.
+    # Derive relation references from self._charm (e.g. self._charm.model.relations[...]).
+    # Return None (or an empty collection) on missing / malformed data; never raise.
+    ...
+
+  def write_<data>(self, <fields>) -> None:
+    # Write data back into the relation databag or via the library.
+    # Derive relation references from self._charm (e.g. self._charm.model.get_relation(...)).
+    ...
+```
+
+In `charm.py`, handlers are created with `self` as the charm and stored as attributes. The state property calls `CharmState.from_charm` with those handler instances:
+
+```python
+class MyCharm(CharmBaseWithState):
+  def __init__(self, *args):
+    super().__init__(*args)
+    self._handler_a = RelationHandlerA(self, <other_dependencies>)
+    self._handler_b = RelationHandlerB(self, <other_dependencies>)
+    # Any library instance needed for event observation can be retrieved
+    # from the handler via a property.
+    self.lib = self._handler_b.lib
+
+  @property
+  def state(self) -> CharmState | None:
+    if self._state is None:
+      self._state = CharmState.from_charm(self._handler_a, self._handler_b)
+    return self._state
+```
+
+Multiple handlers (one per endpoint or interface version) can be passed to `CharmState.from_charm` when a charm bridges more than one relation interface.
 
 ### Template system
 
