@@ -64,6 +64,12 @@ def _mapping_label(common_name: str, sans: list[str]) -> str:
     return f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
 
 
+def _client_mapping_label(app_name: str) -> str:
+    """Compute the expected secret label for a synthetic client cert mapping."""
+    csr_pem = build_csr(_TEST_KEY_PEM, f"{app_name}-client", [])
+    return f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
+
+
 class TestReconcileStatus:
     """Tests for unit status set by reconcile()."""
 
@@ -195,6 +201,16 @@ class TestCertificatesRelationChangedCsrMapping:
                 "relation-id": "5",
             },
         )
+        client_csr_pem = build_csr(_TEST_KEY_PEM, "keystone-client", [])
+        existing_client_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(client_csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/client",
+                "relation-id": "5",
+            },
+        )
         relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
             remote_app_name="keystone",
@@ -202,7 +218,9 @@ class TestCertificatesRelationChangedCsrMapping:
                 0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
             },
         )
-        state = ops.testing.State(relations={relation}, secrets={key_secret, existing_mapping})
+        state = ops.testing.State(
+            relations={relation}, secrets={key_secret, existing_mapping, existing_client_mapping}
+        )
 
         out = context.run(context.on.relation_changed(relation=relation), state)
 
@@ -291,6 +309,16 @@ class TestUpgradeCharm:
                 "relation-id": "5",
             },
         )
+        client_csr_pem = build_csr(_TEST_KEY_PEM, "keystone-client", [])
+        existing_client_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(client_csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/client",
+                "relation-id": "5",
+            },
+        )
         relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
             remote_app_name="keystone",
@@ -300,7 +328,7 @@ class TestUpgradeCharm:
         )
         state_in = ops.testing.State(
             relations={relation},
-            secrets={key_secret, existing_mapping},
+            secrets={key_secret, existing_mapping, existing_client_mapping},
         )
 
         out = context.run(context.on.upgrade_charm(), state_in)
@@ -588,6 +616,60 @@ class TestCertificateAvailableDelivery:
         cinder_chain = cinder_rel.local_unit_data.get("chain", "")
         assert str(cert) not in cinder_chain, "leaf cert must not appear in other relation's chain"
         assert str(ca_certificate) in cinder_chain
+
+    def test_client_cert_written_to_client_cert_and_key_keys(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: A client cert mapping secret (is_client=True) in state.
+        act: Fire certificate_available for the client CSR.
+        assert: client.cert and client.key are written to the relation; server cert keys absent.
+        """
+        from constants import CLIENT_CERT_KEY, CLIENT_KEY_KEY, JUJU_SECRET_IS_CLIENT_KEY
+
+        ovn_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="ovn-central",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        client_csr_pem = build_csr(_TEST_KEY_PEM, "ovn-central-client", [])
+        client_cert = sign_csr(client_csr_pem, ca_certificate, ca_private_key)
+        client_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(client_csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "ovn-central/client",
+                "relation-id": str(ovn_relation.id),
+                JUJU_SECRET_IS_CLIENT_KEY: "true",
+            },
+        )
+        state_in = ops.testing.State(
+            relations={ovn_relation, upstream_relation},
+            secrets={key_secret, client_mapping},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=client_cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(client_csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(ovn_relation.id)
+        assert out_rel is not None
+        assert out_rel.local_unit_data.get(CLIENT_CERT_KEY) == str(client_cert)
+        assert out_rel.local_unit_data.get(CLIENT_KEY_KEY) == _TEST_KEY_PEM
+        # Must NOT write per-unit server cert keys
+        assert not any(k.endswith(".server.cert") for k in out_rel.local_unit_data)
 
     def test_missing_mapping_secret_logs_error_and_skips(
         self,

@@ -48,13 +48,18 @@ class TestGetCertificateRequests:
 
         requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
-        assert len(requests) == 1
-        assert requests[0].common_name == "keystone.internal"
-        assert requests[0].sans_dns == ["keystone.internal"]
-        assert requests[0].cert_type == "server"
-        assert requests[0].requirer_unit_name == "keystone/0"
-        assert requests[0].relation_id == 5
-        assert requests[0].is_legacy is False
+        assert len(requests) == 2
+        server_req = next(r for r in requests if not r.is_client)
+        assert server_req.common_name == "keystone.internal"
+        assert server_req.sans_dns == ["keystone.internal"]
+        assert server_req.cert_type == "server"
+        assert server_req.requirer_unit_name == "keystone/0"
+        assert server_req.relation_id == 5
+        assert server_req.is_legacy is False
+        client_req = next(r for r in requests if r.is_client)
+        assert client_req.common_name == "keystone-client"
+        assert client_req.cert_type == "client"
+        assert client_req.relation_id == 5
 
     def test_batch_format_multiple_cns(self):
         """
@@ -75,10 +80,14 @@ class TestGetCertificateRequests:
 
         requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
-        assert len(requests) == 2
-        cns = {r.common_name for r in requests}
+        assert len(requests) == 3
+        server_reqs = [r for r in requests if not r.is_client]
+        client_reqs = [r for r in requests if r.is_client]
+        cns = {r.common_name for r in server_reqs}
         assert cns == {"keystone.internal", "nova.internal"}
-        assert all(r.is_legacy is False for r in requests)
+        assert all(r.is_legacy is False for r in server_reqs)
+        assert len(client_reqs) == 1
+        assert client_reqs[0].common_name == "keystone-client"
 
     def test_legacy_format(self):
         """
@@ -99,10 +108,13 @@ class TestGetCertificateRequests:
 
         requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
-        assert len(requests) == 1
-        assert requests[0].common_name == "cinder.internal"
-        assert requests[0].sans_dns == ["10.149.56.105"]
-        assert requests[0].is_legacy is True
+        assert len(requests) == 2
+        server_req = next(r for r in requests if not r.is_client)
+        assert server_req.common_name == "cinder.internal"
+        assert server_req.sans_dns == ["10.149.56.105"]
+        assert server_req.is_legacy is True
+        client_req = next(r for r in requests if r.is_client)
+        assert client_req.common_name == "cinder-client"
 
     def test_both_formats_in_same_databag(self):
         """
@@ -124,11 +136,15 @@ class TestGetCertificateRequests:
 
         requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
-        assert len(requests) == 2
-        legacy = next(r for r in requests if r.is_legacy)
-        batch = next(r for r in requests if not r.is_legacy)
+        assert len(requests) == 3
+        server_reqs = [r for r in requests if not r.is_client]
+        client_reqs = [r for r in requests if r.is_client]
+        legacy = next(r for r in server_reqs if r.is_legacy)
+        batch = next(r for r in server_reqs if not r.is_legacy)
         assert legacy.common_name == "cn1.internal"
         assert batch.common_name == "cn2.internal"
+        assert len(client_reqs) == 1
+        assert client_reqs[0].common_name == "keystone-client"
 
     def test_missing_cert_requests_no_common_name(self):
         """
@@ -191,10 +207,13 @@ class TestGetCertificateRequests:
 
         requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
-        assert len(requests) == 1
-        assert requests[0].common_name == "cn1.internal"
-        assert requests[0].sans_dns == []
-        assert requests[0].is_legacy is True
+        assert len(requests) == 2
+        server_req = next(r for r in requests if not r.is_client)
+        assert server_req.common_name == "cn1.internal"
+        assert server_req.sans_dns == []
+        assert server_req.is_legacy is True
+        client_req = next(r for r in requests if r.is_client)
+        assert client_req.common_name == "keystone-client"
 
     def test_batch_sans_not_list(self):
         """
@@ -210,9 +229,12 @@ class TestGetCertificateRequests:
 
         requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
-        assert len(requests) == 1
-        assert requests[0].sans_dns == ["10.0.0.1"]
-        assert requests[0].is_legacy is False
+        assert len(requests) == 2
+        server_req = next(r for r in requests if not r.is_client)
+        assert server_req.sans_dns == ["10.0.0.1"]
+        assert server_req.is_legacy is False
+        client_req = next(r for r in requests if r.is_client)
+        assert client_req.common_name == "keystone-client"
 
 
 class TestWriteCertificate:

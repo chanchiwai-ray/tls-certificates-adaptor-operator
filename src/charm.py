@@ -20,6 +20,7 @@ from charmlibs.interfaces.tls_certificates import (
 
 from constants import (
     CSR_FINGERPRINTS_KEY,
+    JUJU_SECRET_IS_CLIENT_KEY,
     JUJU_SECRET_IS_LEGACY_KEY,
     JUJU_SECRET_LABEL_PREFIX,
     OLD_INTERFACE_RELATION_NAME,
@@ -141,6 +142,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 cr.requirer_unit_name,
                 cr.relation_id,
                 is_legacy=cr.is_legacy,
+                is_client=cr.is_client,
             )
             logger.info(
                 "Stored CSR mapping for %s (%s) on relation %d",
@@ -206,6 +208,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         requirer_unit_name = mapping["requirer-unit"]
         private_key_pem = mapping["private-key"]
         is_legacy = mapping.get(JUJU_SECRET_IS_LEGACY_KEY, "false") == "true"
+        is_client = mapping.get(JUJU_SECRET_IS_CLIENT_KEY, "false") == "true"
 
         relation = None
         with contextlib.suppress(ops.RelationNotFoundError):
@@ -229,16 +232,23 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             "\n".join(str(c) for c in event.chain if str(c) != leaf_pem) if event.chain else ""
         )
 
-        self._old_handler.write_certificate(
-            relation_id=relation_id,
-            requirer_unit_name=requirer_unit_name,
-            common_name=str(event.certificate.common_name),
-            cert=str(event.certificate),
-            key=private_key_pem,
-            ca=str(event.ca),
-            chain=chain_pem,
-            is_legacy=is_legacy,
-        )
+        if is_client:
+            self._old_handler.write_client_cert(
+                relation_id=relation_id,
+                cert=str(event.certificate),
+                key=private_key_pem,
+            )
+        else:
+            self._old_handler.write_certificate(
+                relation_id=relation_id,
+                requirer_unit_name=requirer_unit_name,
+                common_name=str(event.certificate.common_name),
+                cert=str(event.certificate),
+                key=private_key_pem,
+                ca=str(event.ca),
+                chain=chain_pem,
+                is_legacy=is_legacy,
+            )
         self._old_handler.write_ca(ca=str(event.ca), chain=ca_chain_pem)
         self.reconcile()
 

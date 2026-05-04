@@ -32,6 +32,8 @@ import ops
 
 from constants import (
     CERT_REQUEST_KEY,
+    CLIENT_CERT_KEY,
+    CLIENT_KEY_KEY,
     LEGACY_CERT_SUFFIX,
     LEGACY_KEY_SUFFIX,
     OLD_INTERFACE_CERT_TYPE,
@@ -69,18 +71,41 @@ class OldTLSCertificatesRelation:
         Both formats may coexist in the same unit databag.  Malformed or
         missing data is logged and skipped.
 
+        Also synthesizes one **client cert request** per relation that has at
+        least one server cert request.  The old reactive tls-certificates
+        provider convention always generated a shared ``client.cert``/
+        ``client.key`` pair alongside the per-unit server certs, which charms
+        such as ovn-central use for mutual TLS between their OVSDB components.
+
         Returns:
             A list of :class:`~models.CertificateRequest` objects for all
-            server certificate requests found across every active relation.
+            server certificate requests found across every active relation,
+            plus one synthetic client cert request per active relation.
         """
         requests: list[CertificateRequest] = []
         for relation in self._charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
+            relation_requests: list[CertificateRequest] = []
+            app_name: str | None = None
             for unit in relation.units:
                 data = relation.data[unit]
                 legacy = self._parse_legacy_request(data, unit.name, relation.id)
                 if legacy is not None:
-                    requests.append(legacy)
-                requests.extend(self._parse_batch_requests(data, unit.name, relation.id))
+                    relation_requests.append(legacy)
+                relation_requests.extend(self._parse_batch_requests(data, unit.name, relation.id))
+                if app_name is None:
+                    app_name = unit.name.split("/")[0]
+            requests.extend(relation_requests)
+            if relation_requests and app_name:
+                requests.append(
+                    CertificateRequest(
+                        common_name=f"{app_name}-client",
+                        sans_dns=[],
+                        cert_type="client",
+                        requirer_unit_name=f"{app_name}/client",
+                        relation_id=relation.id,
+                        is_client=True,
+                    )
+                )
         return requests
 
     def _parse_legacy_request(
@@ -242,6 +267,31 @@ class OldTLSCertificatesRelation:
             is_legacy,
             relation_id,
         )
+
+    def write_client_cert(self, relation_id: int, cert: str, key: str) -> None:
+        """Write a shared client certificate and key to the old-interface provider databag.
+
+        The reactive tls-certificates provider convention writes a shared
+        ``client.cert``/``client.key`` pair to the relation databag alongside
+        per-unit server certificates.  Charms such as ovn-central use this
+        client cert for mutual TLS between their OVSDB components
+        (ovn-northd ↔ ovsdb-server connections).
+
+        Args:
+            relation_id: ID of the old-interface relation to write to.
+            cert: PEM-encoded signed client certificate.
+            key: PEM-encoded private key for the client certificate.
+        """
+        relation = self._charm.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
+        if relation is None:
+            logger.warning(
+                "Cannot write client cert: relation %d not found in active relations", relation_id
+            )
+            return
+        databag = relation.data[self._charm.unit]
+        databag[CLIENT_CERT_KEY] = cert
+        databag[CLIENT_KEY_KEY] = key
+        logger.debug("Wrote client.cert/client.key to relation %d", relation_id)
 
     def write_ca(self, ca: str, chain: str = "") -> None:
         """Write the upstream CA cert to all active old-interface relations.

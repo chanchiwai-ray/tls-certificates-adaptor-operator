@@ -17,10 +17,11 @@ class CertificateRequest(BaseModel):
 
     common_name: str
     sans_dns: list[str]
-    cert_type: Literal["server"]
+    cert_type: Literal["server", "client"]
     requirer_unit_name: str
     relation_id: int
     is_legacy: bool = False
+    is_client: bool = False
 
 
 class IssuedCertificate(BaseModel):

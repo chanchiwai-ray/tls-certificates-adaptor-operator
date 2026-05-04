@@ -9,6 +9,7 @@ import ops
 
 from constants import (
     CHARM_PRIVATE_KEY_SECRET_LABEL,
+    JUJU_SECRET_IS_CLIENT_KEY,
     JUJU_SECRET_IS_LEGACY_KEY,
     JUJU_SECRET_LABEL_PREFIX,
 )
@@ -83,6 +84,7 @@ class TestStoreCsrMapping:
                 "requirer-unit": "keystone/0",
                 "relation-id": "5",
                 JUJU_SECRET_IS_LEGACY_KEY: "false",
+                JUJU_SECRET_IS_CLIENT_KEY: "false",
             },
             label=_MAPPING_LABEL,
         )
