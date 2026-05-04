@@ -142,6 +142,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 self._charm_key_pem,
                 cr.requirer_unit_name,
                 cr.relation_id,
+                is_legacy=cr.is_legacy,
             )
             logger.info(
                 "Stored CSR mapping for %s (%s) on relation %d",
@@ -176,6 +177,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         relation_id = int(mapping["relation-id"])
         requirer_unit_name = mapping["requirer-unit"]
         private_key_pem = mapping["private-key"]
+        is_legacy = mapping.get("is-legacy", "false") == "true"
 
         relation = None
         with contextlib.suppress(ops.RelationNotFoundError):
@@ -189,6 +191,8 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             revoke_csr_mapping(self, csr_pem)
             return
 
+        chain_pem = "\n".join(str(c) for c in event.chain) if event.chain else ""
+
         self._old_handler.write_certificate(
             relation_id=relation_id,
             requirer_unit_name=requirer_unit_name,
@@ -196,7 +200,10 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             cert=str(event.certificate),
             key=private_key_pem,
             ca=str(event.ca),
+            chain=chain_pem,
+            is_legacy=is_legacy,
         )
+        self._old_handler.write_ca(ca=str(event.ca), chain=chain_pem)
         self.reconcile()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:

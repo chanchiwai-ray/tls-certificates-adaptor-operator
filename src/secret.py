@@ -45,6 +45,7 @@ def store_csr_mapping(
     private_key_pem: str,
     requirer_unit: str,
     relation_id: int,
+    is_legacy: bool = False,
 ) -> None:
     """Create a unit-owned Juju Secret mapping a CSR fingerprint to its requirer.
 
@@ -58,6 +59,10 @@ def store_csr_mapping(
         private_key_pem (str): PEM-encoded private key to store in the secret.
         requirer_unit (str): The old-interface requirer unit name (e.g. ``keystone/0``).
         relation_id (int): The old-interface relation ID.
+        is_legacy (bool): When True the request used the legacy single-cert
+            format; when False it used the batch format.  Stored so that
+            ``_on_certificate_available`` can pass the correct flag to
+            ``write_certificate()``.
     """
     label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
     charm.unit.add_secret(
@@ -65,6 +70,7 @@ def store_csr_mapping(
             "private-key": private_key_pem,
             "requirer-unit": requirer_unit,
             "relation-id": str(relation_id),
+            "is-legacy": "true" if is_legacy else "false",
         },
         label=label,
     )
