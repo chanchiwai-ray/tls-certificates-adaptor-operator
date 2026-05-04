@@ -70,6 +70,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
 
         self.framework.observe(self.on.install, self.reconcile)
         self.framework.observe(self.on.config_changed, self.reconcile)
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(
             self.on[OLD_INTERFACE_RELATION_NAME].relation_changed,
             self._on_certificates_relation_changed,
@@ -109,24 +110,20 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             return
         self.unit.status = ops.ActiveStatus()
 
-    def _on_certificates_relation_changed(self, event: ops.RelationChangedEvent) -> None:
-        """Store a CSR mapping secret for each new old-interface certificate request.
+    def _process_old_interface_relation(self, relation: ops.Relation) -> None:
+        """Store CSR mapping secrets for all pending requests on a single relation.
 
-        For each CertificateRequest that does not yet have a mapping secret,
-        builds a deterministic CSR from the charm's stable private key and
-        the request attributes, then persists a mapping secret keyed by the
-        CSR fingerprint.  The upstream TLS library picks up the updated CSR
-        list automatically via the ``refresh_events`` hook registered in
-        ``__init__``.  Already-mapped requests are skipped (idempotent).
-
-        Also writes the accumulated CSR fingerprints for this relation into the
-        local unit relation databag so that ``_on_certificates_relation_broken``
-        can revoke them without needing remote unit data.
+        For each CertificateRequest on *relation* that does not yet have a
+        mapping secret, builds a deterministic CSR and persists a mapping
+        secret keyed by the CSR fingerprint.  Already-mapped requests are
+        skipped (idempotent).  Also writes the accumulated fingerprints into
+        the local unit relation databag for use by
+        ``_on_certificates_relation_broken``.
         """
         state = self.state
         fingerprints = []
         for cr in state.certificate_requests if state else []:
-            if cr.relation_id != event.relation.id:
+            if cr.relation_id != relation.id:
                 continue
             csr_pem = build_csr(self._charm_key_pem, cr.common_name, cr.sans_dns)
             fingerprints.append(csr_sha256_hex(csr_pem))
@@ -152,7 +149,37 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 cr.relation_id,
             )
         if fingerprints:
-            event.relation.data[self.unit][CSR_FINGERPRINTS_KEY] = json.dumps(fingerprints)
+            relation.data[self.unit][CSR_FINGERPRINTS_KEY] = json.dumps(fingerprints)
+
+    def _on_certificates_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Store a CSR mapping secret for each new old-interface certificate request.
+
+        For each CertificateRequest that does not yet have a mapping secret,
+        builds a deterministic CSR from the charm's stable private key and
+        the request attributes, then persists a mapping secret keyed by the
+        CSR fingerprint.  The upstream TLS library picks up the updated CSR
+        list automatically via the ``refresh_events`` hook registered in
+        ``__init__``.  Already-mapped requests are skipped (idempotent).
+
+        Also writes the accumulated CSR fingerprints for this relation into the
+        local unit relation databag so that ``_on_certificates_relation_broken``
+        can revoke them without needing remote unit data.
+        """
+        self._process_old_interface_relation(event.relation)
+        self.reconcile(event)
+
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Re-process all active old-interface relations after a charm refresh.
+
+        ``juju refresh`` does not re-emit ``relation_changed`` events, so any
+        fix applied to the relation handler would only take effect for new
+        units.  This handler bridges that gap by re-running
+        ``_process_old_interface_relation`` for every currently active
+        old-interface relation, ensuring the updated charm code is applied to
+        all existing requesters immediately after upgrade.
+        """
+        for relation in self.model.relations[OLD_INTERFACE_RELATION_NAME]:
+            self._process_old_interface_relation(relation)
         self.reconcile(event)
 
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:

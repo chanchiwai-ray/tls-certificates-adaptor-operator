@@ -236,6 +236,93 @@ class TestCertificatesRelationChangedCsrMapping:
         assert created == expected_labels
 
 
+class TestUpgradeCharm:
+    """Tests for _on_upgrade_charm — re-processing existing relations after juju refresh."""
+
+    def test_upgrade_charm_creates_mapping_secrets_for_existing_relations(
+        self, context: ops.testing.Context, key_secret: ops.testing.Secret
+    ):
+        """
+        arrange: Two old-interface relations (keystone, cinder) already exist; no mapping secrets.
+        act: Fire upgrade_charm.
+        assert: A CSR mapping secret is created for each relation's pending request.
+        """
+        keystone_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            remote_units_data={
+                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
+            },
+        )
+        cinder_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="cinder",
+            remote_units_data={0: {"cert_requests": _cert_req("cinder.internal", ["10.0.0.1"])}},
+        )
+        state_in = ops.testing.State(
+            relations={keystone_relation, cinder_relation},
+            secrets={key_secret},
+        )
+
+        out = context.run(context.on.upgrade_charm(), state_in)
+
+        expected_labels = {
+            _mapping_label("keystone.internal", ["keystone.internal"]),
+            _mapping_label("cinder.internal", ["10.0.0.1"]),
+        }
+        created = {s.label for s in out.secrets if s.label in expected_labels}
+        assert created == expected_labels
+
+    def test_upgrade_charm_is_idempotent_when_mappings_already_exist(
+        self, context: ops.testing.Context, key_secret: ops.testing.Secret
+    ):
+        """
+        arrange: One old-interface relation whose CSR mapping secret already exists.
+        act: Fire upgrade_charm.
+        assert: No new mapping secret is created (idempotent).
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        existing_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/0",
+                "relation-id": "5",
+            },
+        )
+        relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            remote_units_data={
+                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
+            },
+        )
+        state_in = ops.testing.State(
+            relations={relation},
+            secrets={key_secret, existing_mapping},
+        )
+
+        out = context.run(context.on.upgrade_charm(), state_in)
+
+        assert len(out.secrets) == len(state_in.secrets)
+
+    def test_upgrade_charm_sets_active_status_when_upstream_exists(
+        self, context: ops.testing.Context
+    ):
+        """
+        arrange: Upstream TLS provider relation is active; no old-interface relations.
+        act: Fire upgrade_charm.
+        assert: Unit status is ActiveStatus.
+        """
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        state_in = ops.testing.State(relations={upstream_relation})
+
+        out = context.run(context.on.upgrade_charm(), state_in)
+
+        assert out.unit_status == ops.ActiveStatus()
+
+
 class TestCertificatesUpstreamRelationJoined:
     """Tests for _on_certificates_upstream_relation_joined (PR 002)."""
 
