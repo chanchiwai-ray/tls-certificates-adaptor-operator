@@ -154,8 +154,20 @@ class OldTLSCertificatesRelation:
         cert: str,
         key: str,
         ca: str,
+        chain: str = "",
+        is_legacy: bool = False,
     ) -> None:
         """Write a signed certificate and private key to the old-interface (v1) provider databag.
+
+        For the **legacy** format (``is_legacy=True``), writes individual
+        ``{munged}.server.cert`` / ``{munged}.server.key`` keys alongside a
+        top-level ``ca`` key (and optional ``chain``), which is what the
+        reactive ``server_certs`` property reads.
+
+        For the **batch** format (``is_legacy=False``), merges the new cert
+        into the ``{munged}.processed_requests`` dict so that multiple CNs
+        from the same requirer unit accumulate in a single key, plus top-level
+        ``ca`` (and optional ``chain``).
 
         Args:
             relation_id: ID of the old-interface relation to write to.
@@ -164,6 +176,9 @@ class OldTLSCertificatesRelation:
             cert: PEM-encoded signed certificate.
             key: PEM-encoded private key.
             ca: PEM-encoded CA certificate.
+            chain: Optional PEM-encoded concatenated certificate chain.
+            is_legacy: When True use the legacy single-cert key format; when
+                False use the batch ``processed_requests`` dict format.
         """
         relation = self._charm.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
         if relation is None:
@@ -172,22 +187,49 @@ class OldTLSCertificatesRelation:
             )
             return
         munged = requirer_unit_name.replace("/", "_")
-        databag_key = f"{munged}{PROCESSED_REQUESTS_SUFFIX}"
-        payload = json.dumps(
-            [
-                {
-                    "cert_type": OLD_INTERFACE_CERT_TYPE,
-                    "common_name": common_name,
-                    "cert": cert,
-                    "key": key,
-                    "ca": ca,
-                }
-            ]
-        )
-        relation.data[self._charm.unit][databag_key] = payload
+        databag = relation.data[self._charm.unit]
+
+        if is_legacy:
+            databag[f"{munged}.server.cert"] = cert
+            databag[f"{munged}.server.key"] = key
+        else:
+            key_name = f"{munged}{PROCESSED_REQUESTS_SUFFIX}"
+            existing_raw = databag.get(key_name) or "{}"
+            try:
+                existing: dict = json.loads(existing_raw)
+                if not isinstance(existing, dict):
+                    existing = {}
+            except json.JSONDecodeError:
+                existing = {}
+            existing[common_name] = {"cert": cert, "key": key}
+            databag[key_name] = json.dumps(existing)
+
+        databag["ca"] = ca
+        if chain:
+            databag["chain"] = chain
+
         logger.debug(
-            "Wrote certificate for %s (common_name=%r) to relation %d",
+            "Wrote certificate for %s (common_name=%r, is_legacy=%s) to relation %d",
             requirer_unit_name,
             common_name,
+            is_legacy,
             relation_id,
         )
+
+    def write_ca(self, ca: str, chain: str = "") -> None:
+        """Write the upstream CA cert to all active old-interface relations.
+
+        This propagates the CA (and optional chain) to every old-interface
+        relation so requirers that gate on ``{endpoint}.ca.available`` can
+        proceed, and so that CA rotation is reflected without waiting for a
+        certificate renewal event.
+
+        Args:
+            ca: PEM-encoded CA certificate.
+            chain: Optional PEM-encoded concatenated certificate chain.
+        """
+        for relation in self._charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
+            relation.data[self._charm.unit]["ca"] = ca
+            if chain:
+                relation.data[self._charm.unit]["chain"] = chain
+        logger.debug("Propagated CA to all old-interface relations")
