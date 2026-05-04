@@ -541,6 +541,54 @@ class TestCertificateAvailableDelivery:
             assert out_rel is not None, f"relation {rel_id} missing from output state"
             assert out_rel.local_unit_data.get("ca") == str(ca_certificate)
 
+    def test_leaf_cert_excluded_from_chain_written_to_other_relations(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: Two old-interface relations (keystone, cinder); event.chain includes the leaf.
+        act: Fire certificate_available for keystone's CSR with chain=[leaf, ca].
+        assert: Cinder's relation databag chain does NOT contain the keystone leaf cert.
+        """
+        keystone_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        cinder_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="cinder",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(csr_pem, keystone_relation.id, is_legacy=False)
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+
+        state_in = ops.testing.State(
+            relations={keystone_relation, cinder_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                # Simulate providers that include the leaf in the chain list.
+                chain=[cert, ca_certificate],
+            ),
+            state_in,
+        )
+
+        cinder_rel = out.get_relation(cinder_relation.id)
+        assert cinder_rel is not None
+        cinder_chain = cinder_rel.local_unit_data.get("chain", "")
+        assert str(cert) not in cinder_chain, "leaf cert must not appear in other relation's chain"
+        assert str(ca_certificate) in cinder_chain
+
     def test_missing_mapping_secret_logs_error_and_skips(
         self,
         context: ops.testing.Context,

@@ -219,7 +219,15 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             revoke_csr_mapping(self, csr_pem)
             return
 
+        leaf_pem = str(event.certificate)
         chain_pem = "\n".join(str(c) for c in event.chain) if event.chain else ""
+        # Strip the leaf cert from the chain before broadcasting to all relations.
+        # event.chain from some providers (e.g. self-signed-certificates) includes
+        # the leaf alongside the CA certs.  Broadcasting the leaf to unrelated
+        # requirers (e.g. OVN gets Keystone's cert) breaks their chain verification.
+        ca_chain_pem = (
+            "\n".join(str(c) for c in event.chain if str(c) != leaf_pem) if event.chain else ""
+        )
 
         self._old_handler.write_certificate(
             relation_id=relation_id,
@@ -231,7 +239,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             chain=chain_pem,
             is_legacy=is_legacy,
         )
-        self._old_handler.write_ca(ca=str(event.ca), chain=chain_pem)
+        self._old_handler.write_ca(ca=str(event.ca), chain=ca_chain_pem)
         self.reconcile()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
