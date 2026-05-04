@@ -7,13 +7,18 @@ The "old" interface is the original reactive ``tls-certificates`` interface
 (interface name ``tls-certificates``, sometimes called v1) used by Charmed
 OpenStack services (keystone, nova-cloud-controller, cinder, etc.) up to and
 including Yoga.  In this protocol the *provider* generates and returns both the
-private key and the signed certificate.  The requirer writes a JSON list of
-certificate requests (``cert_requests`` key) into its unit databag; the
-provider writes the issued material back into its own unit databag under a key
-derived from the requirer unit name.
+private key and the signed certificate.
+
+Requesters write certificate requests into their unit databag in one of two
+formats:
+
+- **Legacy format**: ``common_name`` and ``sans`` as direct string keys
+  (used by the reactive library for the first certificate per unit).
+- **Batch format**: ``cert_requests`` as a JSON-encoded dict
+  ``{"<cn>": {"sans": [...]}}`` (used by charmhelpers ``CertRequest.get_request()``).
 
 This module provides :class:`OldTLSCertificatesRelation`, which handles all
-reads and writes for a single such relation.  The shared data models
+reads and writes for all old-interface relations.  The shared data models
 :class:`~models.CertificateRequest` and :class:`~models.IssuedCertificate` live
 in :mod:`models`.
 """
@@ -52,63 +57,91 @@ class OldTLSCertificatesRelation:
     def get_certificate_requests(self) -> list[CertificateRequest]:
         """Read certificate requests from all old-interface (v1) requirer unit databags.
 
+        Handles both request sub-formats written by OpenStack charms:
+
+        - **Legacy format**: ``common_name`` and ``sans`` as direct databag keys.
+        - **Batch format**: ``cert_requests`` as a JSON-encoded dict
+          ``{"<cn>": {"sans": [...]}}``, used by charmhelpers
+          ``CertRequest.get_request()``.
+
+        Both formats may coexist in the same unit databag.  Malformed or
+        missing data is logged and skipped.
+
         Returns:
-            A list of CertificateRequest objects for all ``server`` cert requests found
-            across every active old-interface relation.
-            Requests with a cert_type other than ``server`` are logged and skipped.
-            Malformed or missing data is logged and skipped.
+            A list of :class:`~models.CertificateRequest` objects for all
+            server certificate requests found across every active relation.
         """
         requests: list[CertificateRequest] = []
         for relation in self._charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
             for unit in relation.units:
-                raw = relation.data[unit].get(CERT_REQUEST_KEY, "")
-                if not raw:
-                    logger.debug(
-                        "No cert_requests data in unit databag for %s on relation %d",
-                        unit.name,
-                        relation.id,
+                data = relation.data[unit]
+
+                # --- Legacy format: common_name as a direct databag key ---
+                cn = data.get("common_name", "").strip()
+                if cn:
+                    raw_sans = data.get("sans", "")
+                    try:
+                        sans: list[str] = json.loads(raw_sans) if raw_sans else []
+                        if not isinstance(sans, list):
+                            raise ValueError("sans is not a list")
+                    except (json.JSONDecodeError, ValueError):
+                        logger.warning(
+                            "Malformed sans in legacy databag for %s on relation %d; using []",
+                            unit.name,
+                            relation.id,
+                        )
+                        sans = []
+                    requests.append(
+                        CertificateRequest(
+                            common_name=cn,
+                            sans_dns=[str(s) for s in sans],
+                            cert_type=OLD_INTERFACE_CERT_TYPE,
+                            requirer_unit_name=unit.name,
+                            relation_id=relation.id,
+                            is_legacy=True,
+                        )
                     )
+
+                # --- Batch format: cert_requests as a JSON-encoded dict ---
+                raw = data.get(CERT_REQUEST_KEY, "")
+                if not raw:
                     continue
                 try:
                     entries = json.loads(raw)
                 except json.JSONDecodeError:
-                    logger.debug(
-                        "Malformed cert_requests JSON in unit databag for %s on relation %d",
+                    logger.warning(
+                        "Malformed cert_requests JSON for %s on relation %d",
                         unit.name,
                         relation.id,
                     )
                     continue
-                if not isinstance(entries, list):
-                    logger.debug(
-                        "cert_requests is not a list for %s on relation %d",
+                if not isinstance(entries, dict):
+                    logger.warning(
+                        "cert_requests is not a dict for %s on relation %d",
                         unit.name,
                         relation.id,
                     )
                     continue
-                for entry in entries:
-                    if not isinstance(entry, dict):
+                for batch_cn, req in entries.items():
+                    if not batch_cn or not isinstance(req, dict):
                         continue
-                    cert_type = entry.get("cert_type", "")
-                    if cert_type != OLD_INTERFACE_CERT_TYPE:
+                    batch_sans = req.get("sans") or []
+                    if not isinstance(batch_sans, list):
                         logger.warning(
-                            "Skipping cert request with unsupported cert_type %r from %s on relation %d",
-                            cert_type,
+                            "sans is not a list for CN %r from %s on relation %d; wrapping",
+                            batch_cn,
                             unit.name,
                             relation.id,
                         )
-                        continue
-                    common_name = entry.get("common_name", "")
-                    sans_raw = entry.get("sans") or entry.get("sans_dns") or []
-                    if not isinstance(sans_raw, list):
-                        sans_raw = [sans_raw]
-                    sans_dns = [str(s) for s in sans_raw]
+                        batch_sans = [batch_sans]
                     requests.append(
                         CertificateRequest(
-                            common_name=common_name,
-                            sans_dns=sans_dns,
+                            common_name=batch_cn,
+                            sans_dns=[str(s) for s in batch_sans],
                             cert_type=OLD_INTERFACE_CERT_TYPE,
                             requirer_unit_name=unit.name,
                             relation_id=relation.id,
+                            is_legacy=False,
                         )
                     )
         return requests
