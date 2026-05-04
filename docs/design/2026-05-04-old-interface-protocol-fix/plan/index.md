@@ -15,6 +15,7 @@ date: 2026-05-04
 ## PRs
 
 - [x] PR 001 — Fix old-interface protocol: tasks 001, 002, 003, 004, 005 (reviewed)
+- [x] PR 002 — Production hotfixes: classify IP SANs, re-process relations on upgrade_charm (reviewed)
 
 ## Task checklist
 
@@ -23,3 +24,5 @@ date: 2026-05-04
 - [x] `001-protocol-fix/003-fix-write-certificate-and-add-write-ca` — Write correct response keys per format; add `write_ca()`
 - [x] `001-protocol-fix/004-wire-is-legacy-through-charm` — Store `is-legacy` in mapping secret; call `write_ca()` on cert available
 - [x] `001-protocol-fix/005-unit-tests` — Unit tests for all new and fixed behaviour
+- [x] `002-hotfix/001-classify-ip-sans` — Add `classify_sans()` to `crypto.py`; route IPs to `sans_ip` in `new_tls_certificate.py` and `build_csr()`
+- [x] `002-hotfix/002-upgrade-charm-reprocess` — Add `_on_upgrade_charm` to re-process all active old-interface relations after `juju refresh`; add `upgrade_charm` to `refresh_events`
