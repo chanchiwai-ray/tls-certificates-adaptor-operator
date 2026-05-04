@@ -76,7 +76,10 @@ class NewTLSCertificatesRelation:
             relationship_name=UPSTREAM_RELATION_NAME,
             certificate_requests=cert_request_attrs,
             private_key=PrivateKey.from_string(private_key_pem),
-            refresh_events=[charm.on[OLD_INTERFACE_RELATION_NAME].relation_changed],
+            refresh_events=[
+                charm.on[OLD_INTERFACE_RELATION_NAME].relation_changed,
+                charm.on.upgrade_charm,
+            ],
         )
 
     @property
