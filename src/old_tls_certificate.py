@@ -75,76 +75,101 @@ class OldTLSCertificatesRelation:
         for relation in self._charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
             for unit in relation.units:
                 data = relation.data[unit]
-
-                # --- Legacy format: common_name as a direct databag key ---
-                cn = data.get("common_name", "").strip()
-                if cn:
-                    raw_sans = data.get("sans", "")
-                    try:
-                        sans: list[str] = json.loads(raw_sans) if raw_sans else []
-                        if not isinstance(sans, list):
-                            raise ValueError("sans is not a list")
-                    except (json.JSONDecodeError, ValueError):
-                        logger.warning(
-                            "Malformed sans in legacy databag for %s on relation %d; using []",
-                            unit.name,
-                            relation.id,
-                        )
-                        sans = []
-                    requests.append(
-                        CertificateRequest(
-                            common_name=cn,
-                            sans_dns=[str(s) for s in sans],
-                            cert_type=OLD_INTERFACE_CERT_TYPE,
-                            requirer_unit_name=unit.name,
-                            relation_id=relation.id,
-                            is_legacy=True,
-                        )
-                    )
-
-                # --- Batch format: cert_requests as a JSON-encoded dict ---
-                raw = data.get(CERT_REQUEST_KEY, "")
-                if not raw:
-                    continue
-                try:
-                    entries = json.loads(raw)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Malformed cert_requests JSON for %s on relation %d",
-                        unit.name,
-                        relation.id,
-                    )
-                    continue
-                if not isinstance(entries, dict):
-                    logger.warning(
-                        "cert_requests is not a dict for %s on relation %d",
-                        unit.name,
-                        relation.id,
-                    )
-                    continue
-                for batch_cn, req in entries.items():
-                    if not batch_cn or not isinstance(req, dict):
-                        continue
-                    batch_sans = req.get("sans") or []
-                    if not isinstance(batch_sans, list):
-                        logger.warning(
-                            "sans is not a list for CN %r from %s on relation %d; wrapping",
-                            batch_cn,
-                            unit.name,
-                            relation.id,
-                        )
-                        batch_sans = [batch_sans]
-                    requests.append(
-                        CertificateRequest(
-                            common_name=batch_cn,
-                            sans_dns=[str(s) for s in batch_sans],
-                            cert_type=OLD_INTERFACE_CERT_TYPE,
-                            requirer_unit_name=unit.name,
-                            relation_id=relation.id,
-                            is_legacy=False,
-                        )
-                    )
+                legacy = self._parse_legacy_request(data, unit.name, relation.id)
+                if legacy is not None:
+                    requests.append(legacy)
+                requests.extend(self._parse_batch_requests(data, unit.name, relation.id))
         return requests
+
+    def _parse_legacy_request(
+        self,
+        data: ops.RelationDataContent,
+        unit_name: str,
+        relation_id: int,
+    ) -> CertificateRequest | None:
+        """Parse a legacy single-cert request from a unit databag.
+
+        Returns a :class:`~models.CertificateRequest` with ``is_legacy=True``
+        if a ``common_name`` key is present, or ``None`` if not.
+        """
+        cn = data.get("common_name", "").strip()
+        if not cn:
+            return None
+        raw_sans = data.get("sans", "")
+        try:
+            sans: list[str] = json.loads(raw_sans) if raw_sans else []
+            if not isinstance(sans, list):
+                raise ValueError("sans is not a list")
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(
+                "Malformed sans in legacy databag for %s on relation %d; using []",
+                unit_name,
+                relation_id,
+            )
+            sans = []
+        return CertificateRequest(
+            common_name=cn,
+            sans_dns=[str(s) for s in sans],
+            cert_type=OLD_INTERFACE_CERT_TYPE,
+            requirer_unit_name=unit_name,
+            relation_id=relation_id,
+            is_legacy=True,
+        )
+
+    def _parse_batch_requests(
+        self,
+        data: ops.RelationDataContent,
+        unit_name: str,
+        relation_id: int,
+    ) -> list[CertificateRequest]:
+        """Parse batch-format cert requests (``cert_requests`` JSON dict) from a unit databag.
+
+        Returns one :class:`~models.CertificateRequest` with ``is_legacy=False``
+        per CN in the dict.  Returns an empty list if the key is absent or malformed.
+        """
+        raw = data.get(CERT_REQUEST_KEY, "")
+        if not raw:
+            return []
+        try:
+            entries = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Malformed cert_requests JSON for %s on relation %d",
+                unit_name,
+                relation_id,
+            )
+            return []
+        if not isinstance(entries, dict):
+            logger.warning(
+                "cert_requests is not a dict for %s on relation %d",
+                unit_name,
+                relation_id,
+            )
+            return []
+        results: list[CertificateRequest] = []
+        for batch_cn, req in entries.items():
+            if not batch_cn or not isinstance(req, dict):
+                continue
+            batch_sans = req.get("sans") or []
+            if not isinstance(batch_sans, list):
+                logger.warning(
+                    "sans is not a list for CN %r from %s on relation %d; wrapping",
+                    batch_cn,
+                    unit_name,
+                    relation_id,
+                )
+                batch_sans = [batch_sans]
+            results.append(
+                CertificateRequest(
+                    common_name=batch_cn,
+                    sans_dns=[str(s) for s in batch_sans],
+                    cert_type=OLD_INTERFACE_CERT_TYPE,
+                    requirer_unit_name=unit_name,
+                    relation_id=relation_id,
+                    is_legacy=False,
+                )
+            )
+        return results
 
     def write_certificate(
         self,
