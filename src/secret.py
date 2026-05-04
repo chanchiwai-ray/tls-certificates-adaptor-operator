@@ -7,7 +7,11 @@ import logging
 
 import ops
 
-from constants import CHARM_PRIVATE_KEY_SECRET_LABEL, JUJU_SECRET_LABEL_PREFIX
+from constants import (
+    CHARM_PRIVATE_KEY_SECRET_LABEL,
+    JUJU_SECRET_IS_LEGACY_KEY,
+    JUJU_SECRET_LABEL_PREFIX,
+)
 from crypto import csr_sha256_hex, generate_private_key
 
 logger = logging.getLogger(__name__)
@@ -70,7 +74,7 @@ def store_csr_mapping(
             "private-key": private_key_pem,
             "requirer-unit": requirer_unit,
             "relation-id": str(relation_id),
-            "is-legacy": "true" if is_legacy else "false",
+            JUJU_SECRET_IS_LEGACY_KEY: "true" if is_legacy else "false",
         },
         label=label,
     )

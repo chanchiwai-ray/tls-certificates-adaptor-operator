@@ -7,16 +7,8 @@ import json
 from unittest.mock import MagicMock
 
 import ops
-import ops.testing
-import pytest
 
-from charm import TLSCertificateAdaptorCharm
 from constants import OLD_INTERFACE_RELATION_NAME
-
-@pytest.fixture()
-def context() -> ops.testing.Context:
-    """Return a Context for TLSCertificateAdaptorCharm."""
-    return ops.testing.Context(charm_type=TLSCertificateAdaptorCharm)
 
 
 def _make_charm_for_get(relations: list[ops.Relation]) -> MagicMock:

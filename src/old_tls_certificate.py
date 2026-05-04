@@ -32,6 +32,8 @@ import ops
 
 from constants import (
     CERT_REQUEST_KEY,
+    LEGACY_CERT_SUFFIX,
+    LEGACY_KEY_SUFFIX,
     OLD_INTERFACE_CERT_TYPE,
     OLD_INTERFACE_RELATION_NAME,
     PROCESSED_REQUESTS_SUFFIX,
@@ -215,8 +217,8 @@ class OldTLSCertificatesRelation:
         databag = relation.data[self._charm.unit]
 
         if is_legacy:
-            databag[f"{munged}.server.cert"] = cert
-            databag[f"{munged}.server.key"] = key
+            databag[f"{munged}{LEGACY_CERT_SUFFIX}"] = cert
+            databag[f"{munged}{LEGACY_KEY_SUFFIX}"] = key
         else:
             key_name = f"{munged}{PROCESSED_REQUESTS_SUFFIX}"
             existing_raw = databag.get(key_name) or "{}"

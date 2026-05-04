@@ -20,6 +20,7 @@ from charmlibs.interfaces.tls_certificates import (
 
 from constants import (
     CSR_FINGERPRINTS_KEY,
+    JUJU_SECRET_IS_LEGACY_KEY,
     JUJU_SECRET_LABEL_PREFIX,
     OLD_INTERFACE_RELATION_NAME,
     UPSTREAM_RELATION_NAME,
@@ -177,7 +178,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         relation_id = int(mapping["relation-id"])
         requirer_unit_name = mapping["requirer-unit"]
         private_key_pem = mapping["private-key"]
-        is_legacy = mapping.get("is-legacy", "false") == "true"
+        is_legacy = mapping.get(JUJU_SECRET_IS_LEGACY_KEY, "false") == "true"
 
         relation = None
         with contextlib.suppress(ops.RelationNotFoundError):

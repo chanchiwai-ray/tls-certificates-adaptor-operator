@@ -21,6 +21,7 @@ from charm import TLSCertificateAdaptorCharm
 from constants import (
     CHARM_PRIVATE_KEY_SECRET_LABEL,
     CSR_FINGERPRINTS_KEY,
+    JUJU_SECRET_IS_LEGACY_KEY,
     JUJU_SECRET_LABEL_PREFIX,
     OLD_INTERFACE_RELATION_NAME,
     UPSTREAM_RELATION_NAME,
@@ -174,7 +175,7 @@ class TestCertificatesRelationChangedCsrMapping:
         assert content["requirer-unit"] == "keystone/0"
         assert content["relation-id"] == str(relation.id)
         assert content["private-key"] == _TEST_KEY_PEM
-        assert content["is-legacy"] == "false"
+        assert content[JUJU_SECRET_IS_LEGACY_KEY] == "false"
 
     def test_repeated_event_for_same_request_is_idempotent(
         self, context: ops.testing.Context, key_secret: ops.testing.Secret
@@ -318,7 +319,7 @@ class TestCertificateAvailableDelivery:
                 "private-key": _TEST_KEY_PEM,
                 "requirer-unit": requirer_unit_name,
                 "relation-id": str(old_relation_id),
-                "is-legacy": "true" if is_legacy else "false",
+                JUJU_SECRET_IS_LEGACY_KEY: "true" if is_legacy else "false",
             },
         )
 
@@ -429,9 +430,7 @@ class TestCertificateAvailableDelivery:
         )
         upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
         csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
-        mapping_secret = self._build_mapping_secret(
-            csr_pem, keystone_relation.id, is_legacy=False
-        )
+        mapping_secret = self._build_mapping_secret(csr_pem, keystone_relation.id, is_legacy=False)
         cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
 
         state_in = ops.testing.State(
