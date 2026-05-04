@@ -257,8 +257,6 @@ class OldTLSCertificatesRelation:
             databag[key_name] = json.dumps(existing)
 
         databag["ca"] = ca
-        if chain:
-            databag["chain"] = chain
 
         logger.debug(
             "Wrote certificate for %s (common_name=%r, is_legacy=%s) to relation %d",
@@ -293,20 +291,18 @@ class OldTLSCertificatesRelation:
         databag[CLIENT_KEY_KEY] = key
         logger.debug("Wrote client.cert/client.key to relation %d", relation_id)
 
-    def write_ca(self, ca: str, chain: str = "") -> None:
-        """Write the upstream CA cert to all active old-interface relations.
+    def write_ca(self, ca: str) -> None:
+        """Write the upstream CA cert bundle to all active old-interface relations.
 
-        This propagates the CA (and optional chain) to every old-interface
-        relation so requirers that gate on ``{endpoint}.ca.available`` can
-        proceed, and so that CA rotation is reflected without waiting for a
-        certificate renewal event.
+        Writes the full CA chain (all CA certs from the immediate issuer to
+        root, concatenated) into the ``ca`` key of every old-interface
+        relation provider databag.  The old reactive tls-certificates (v1)
+        interface only reads ``ca`` — there is no ``chain`` key in this
+        protocol — so all CA certs must be bundled into this single field.
 
         Args:
-            ca: PEM-encoded CA certificate.
-            chain: Optional PEM-encoded concatenated certificate chain.
+            ca: PEM-encoded CA certificate bundle (may be concatenated certs).
         """
         for relation in self._charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
             relation.data[self._charm.unit]["ca"] = ca
-            if chain:
-                relation.data[self._charm.unit]["chain"] = chain
         logger.debug("Propagated CA to all old-interface relations")

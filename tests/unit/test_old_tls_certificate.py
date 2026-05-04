@@ -335,28 +335,6 @@ class TestWriteCertificate:
         assert local_databag["ca"] == "CA_PEM"
         assert "cinder_0.processed_requests" not in local_databag
 
-    def test_write_certificate_with_chain(self):
-        """
-        arrange: A mock relation with an empty databag.
-        act: Call write_certificate with a non-empty chain.
-        assert: The 'chain' key is written to the databag.
-        """
-        from old_tls_certificate import OldTLSCertificatesRelation
-
-        charm, local_databag = self._make_charm_for_write()
-        OldTLSCertificatesRelation(charm).write_certificate(
-            relation_id=1,
-            requirer_unit_name="keystone/0",
-            common_name="keystone.internal",
-            cert="CERT",
-            key="KEY",
-            ca="CA",
-            chain="CHAIN_PEM",
-            is_legacy=False,
-        )
-
-        assert local_databag["chain"] == "CHAIN_PEM"
-
     def test_write_certificate_no_chain_omits_chain_key(self):
         """
         arrange: A mock relation with an empty databag.
@@ -422,7 +400,7 @@ class TestWriteCa:
         """
         arrange: Two active old-interface relations.
         act: Call write_ca.
-        assert: ca key is written to both relation databags.
+        assert: ca key is written to both relation databags; no chain key written.
         """
         from old_tls_certificate import OldTLSCertificatesRelation
 
@@ -431,29 +409,4 @@ class TestWriteCa:
 
         for db in databags:
             assert db["ca"] == "CA_PEM"
-
-    def test_write_ca_no_chain_skips_chain_key(self):
-        """
-        arrange: One active old-interface relation.
-        act: Call write_ca with chain=''.
-        assert: chain key is NOT written to the databag.
-        """
-        from old_tls_certificate import OldTLSCertificatesRelation
-
-        charm, databags = self._make_charm_multi_relation(1)
-        OldTLSCertificatesRelation(charm).write_ca(ca="CA_PEM", chain="")
-
-        assert "chain" not in databags[0]
-
-    def test_write_ca_with_chain(self):
-        """
-        arrange: One active old-interface relation.
-        act: Call write_ca with a non-empty chain.
-        assert: chain key is written to the databag.
-        """
-        from old_tls_certificate import OldTLSCertificatesRelation
-
-        charm, databags = self._make_charm_multi_relation(1)
-        OldTLSCertificatesRelation(charm).write_ca(ca="CA_PEM", chain="CHAIN_PEM")
-
-        assert databags[0]["chain"] == "CHAIN_PEM"
+            assert "chain" not in db

@@ -223,14 +223,17 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             return
 
         leaf_pem = str(event.certificate)
-        chain_pem = "\n".join(str(c) for c in event.chain) if event.chain else ""
-        # Strip the leaf cert from the chain before broadcasting to all relations.
-        # event.chain from some providers (e.g. self-signed-certificates) includes
-        # the leaf alongside the CA certs.  Broadcasting the leaf to unrelated
-        # requirers (e.g. OVN gets Keystone's cert) breaks their chain verification.
-        ca_chain_pem = (
-            "\n".join(str(c) for c in event.chain if str(c) != leaf_pem) if event.chain else ""
-        )
+        # Build the full CA chain (all CA certs from immediate issuer to root) by stripping
+        # the leaf cert from event.chain.  The old reactive tls-certificates (v1) interface
+        # only reads the "ca" key and ignores "chain", so we concatenate all CA certs into
+        # a single PEM bundle and write that to "ca".  This also matches the old vault
+        # behaviour where a single root CA cert was all that was needed.
+        ca_certs = [str(c) for c in event.chain if str(c) != leaf_pem] if event.chain else []
+        # Prepend event.ca if it is not already in the chain list to avoid duplication.
+        full_ca_pem = str(event.ca)
+        for cert_pem in ca_certs:
+            if cert_pem not in full_ca_pem:
+                full_ca_pem = full_ca_pem + "\n" + cert_pem
 
         if is_client:
             self._old_handler.write_client_cert(
@@ -239,17 +242,18 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 key=private_key_pem,
             )
         else:
+            chain_pem = "\n".join(str(c) for c in event.chain) if event.chain else ""
             self._old_handler.write_certificate(
                 relation_id=relation_id,
                 requirer_unit_name=requirer_unit_name,
                 common_name=str(event.certificate.common_name),
                 cert=str(event.certificate),
                 key=private_key_pem,
-                ca=str(event.ca),
+                ca=full_ca_pem,
                 chain=chain_pem,
                 is_legacy=is_legacy,
             )
-        self._old_handler.write_ca(ca=str(event.ca), chain=ca_chain_pem)
+        self._old_handler.write_ca(ca=full_ca_pem)
         self.reconcile()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:

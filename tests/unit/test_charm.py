@@ -569,7 +569,7 @@ class TestCertificateAvailableDelivery:
             assert out_rel is not None, f"relation {rel_id} missing from output state"
             assert out_rel.local_unit_data.get("ca") == str(ca_certificate)
 
-    def test_leaf_cert_excluded_from_chain_written_to_other_relations(
+    def test_leaf_cert_excluded_from_ca_written_to_other_relations(
         self,
         context: ops.testing.Context,
         key_secret: ops.testing.Secret,
@@ -579,7 +579,8 @@ class TestCertificateAvailableDelivery:
         """
         arrange: Two old-interface relations (keystone, cinder); event.chain includes the leaf.
         act: Fire certificate_available for keystone's CSR with chain=[leaf, ca].
-        assert: Cinder's relation databag chain does NOT contain the keystone leaf cert.
+        assert: Cinder's 'ca' contains the CA cert; the keystone leaf cert is absent from it;
+                no 'chain' key is written to cinder's databag (v1 interface has no chain field).
         """
         keystone_relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
@@ -613,9 +614,10 @@ class TestCertificateAvailableDelivery:
 
         cinder_rel = out.get_relation(cinder_relation.id)
         assert cinder_rel is not None
-        cinder_chain = cinder_rel.local_unit_data.get("chain", "")
-        assert str(cert) not in cinder_chain, "leaf cert must not appear in other relation's chain"
-        assert str(ca_certificate) in cinder_chain
+        cinder_ca = cinder_rel.local_unit_data.get("ca", "")
+        assert str(cert) not in cinder_ca, "leaf cert must not appear in ca bundle"
+        assert str(ca_certificate) in cinder_ca
+        assert "chain" not in cinder_rel.local_unit_data, "v1 interface must not have chain key"
 
     def test_client_cert_written_to_client_cert_and_key_keys(
         self,
