@@ -78,6 +78,7 @@ class TestStoreCsrMapping:
                 "private-key": _TEST_KEY_PEM,
                 "requirer-unit": "keystone/0",
                 "relation-id": "5",
+                "is-legacy": "false",
             },
             label=_MAPPING_LABEL,
         )

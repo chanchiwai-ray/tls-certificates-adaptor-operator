@@ -53,8 +53,8 @@ def key_secret() -> ops.testing.Secret:
 
 
 def _cert_req(common_name: str, sans: list[str]) -> str:
-    """Return a JSON cert_requests string for the old reactive interface."""
-    return json.dumps([{"cert_type": "server", "common_name": common_name, "sans": sans}])
+    """Return a JSON cert_requests string for the old reactive interface (batch dict format)."""
+    return json.dumps({common_name: {"sans": sans}})
 
 
 def _mapping_label(common_name: str, sans: list[str]) -> str:
@@ -174,6 +174,7 @@ class TestCertificatesRelationChangedCsrMapping:
         assert content["requirer-unit"] == "keystone/0"
         assert content["relation-id"] == str(relation.id)
         assert content["private-key"] == _TEST_KEY_PEM
+        assert content["is-legacy"] == "false"
 
     def test_repeated_event_for_same_request_is_idempotent(
         self, context: ops.testing.Context, key_secret: ops.testing.Secret
@@ -306,6 +307,7 @@ class TestCertificateAvailableDelivery:
         csr_pem: str,
         old_relation_id: int,
         requirer_unit_name: str = "keystone/0",
+        is_legacy: bool = False,
     ) -> ops.testing.Secret:
         """Build a pre-populated CSR mapping secret for the given CSR."""
         label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
@@ -316,10 +318,11 @@ class TestCertificateAvailableDelivery:
                 "private-key": _TEST_KEY_PEM,
                 "requirer-unit": requirer_unit_name,
                 "relation-id": str(old_relation_id),
+                "is-legacy": "true" if is_legacy else "false",
             },
         )
 
-    def test_happy_path_delivers_cert_and_revokes_mapping(
+    def test_happy_path_delivers_cert_and_ca_batch_format(
         self,
         context: ops.testing.Context,
         key_secret: ops.testing.Secret,
@@ -327,9 +330,9 @@ class TestCertificateAvailableDelivery:
         ca_private_key: PrivateKey,
     ):
         """
-        arrange: Old-interface relation, upstream relation, and a CSR mapping secret.
+        arrange: Old-interface relation, upstream relation, and a CSR mapping secret (batch format).
         act: Fire certificate_available with a signed cert.
-        assert: Old-interface unit databag contains cert + key; mapping secret is revoked.
+        assert: {munged}.processed_requests dict contains cert/key; ca is top-level.
         """
         old_relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
@@ -337,7 +340,7 @@ class TestCertificateAvailableDelivery:
         )
         upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
         csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
-        mapping_secret = self._build_mapping_secret(csr_pem, old_relation.id)
+        mapping_secret = self._build_mapping_secret(csr_pem, old_relation.id, is_legacy=False)
         cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
 
         state_in = ops.testing.State(
@@ -359,11 +362,10 @@ class TestCertificateAvailableDelivery:
         out_old_relation = out.get_relation(old_relation.id)
         assert out_old_relation is not None
         payload = json.loads(out_old_relation.local_unit_data["keystone_0.processed_requests"])
-        assert payload[0]["cert"] == str(cert)
-        assert payload[0]["key"] == _TEST_KEY_PEM
-        assert payload[0]["ca"] == str(ca_certificate)
-        assert payload[0]["common_name"] == "keystone.internal"
-        assert payload[0]["cert_type"] == "server"
+        assert isinstance(payload, dict)
+        assert payload["keystone.internal"]["cert"] == str(cert)
+        assert payload["keystone.internal"]["key"] == _TEST_KEY_PEM
+        assert out_old_relation.local_unit_data["ca"] == str(ca_certificate)
 
     def test_mapping_secret_persists_after_delivery(
         self,
@@ -404,6 +406,54 @@ class TestCertificateAvailableDelivery:
 
         mapping_labels = {s.label for s in out.secrets if s.label == mapping_secret.label}
         assert mapping_labels == {mapping_secret.label}
+
+    def test_ca_propagated_to_all_old_interface_relations(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: Two old-interface relations (keystone and cinder); cert available for keystone.
+        act: Fire certificate_available for keystone's CSR.
+        assert: ca key is written to BOTH old-interface relation databags.
+        """
+        keystone_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        cinder_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="cinder",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(
+            csr_pem, keystone_relation.id, is_legacy=False
+        )
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+
+        state_in = ops.testing.State(
+            relations={keystone_relation, cinder_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        for rel_id in (keystone_relation.id, cinder_relation.id):
+            out_rel = out.get_relation(rel_id)
+            assert out_rel is not None, f"relation {rel_id} missing from output state"
+            assert out_rel.local_unit_data.get("ca") == str(ca_certificate)
 
     def test_missing_mapping_secret_logs_error_and_skips(
         self,
