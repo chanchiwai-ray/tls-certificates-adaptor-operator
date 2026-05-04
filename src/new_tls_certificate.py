@@ -30,7 +30,7 @@ from charmlibs.interfaces.tls_certificates import (
 )
 
 from constants import OLD_INTERFACE_RELATION_NAME, UPSTREAM_RELATION_NAME
-from crypto import csr_sha256_hex
+from crypto import classify_sans, csr_sha256_hex
 from models import CertificateRequest, IssuedCertificate
 
 logger = logging.getLogger(__name__)
@@ -60,14 +60,17 @@ class NewTLSCertificatesRelation:
             private_key_pem: PEM-encoded private key for the upstream CSR.
         """
         self._charm = charm
-        cert_request_attrs = [
-            CertificateRequestAttributes(
-                common_name=cr.common_name,
-                sans_dns=cr.sans_dns if cr.sans_dns else None,
-                add_unique_id_to_subject_name=False,
+        cert_request_attrs = []
+        for cr in certificate_requests:
+            dns_sans, ip_sans = classify_sans(cr.sans_dns)
+            cert_request_attrs.append(
+                CertificateRequestAttributes(
+                    common_name=cr.common_name,
+                    sans_dns=dns_sans if dns_sans else None,
+                    sans_ip=ip_sans if ip_sans else None,
+                    add_unique_id_to_subject_name=False,
+                )
             )
-            for cr in certificate_requests
-        ]
         self._tls = TLSCertificatesRequiresV4(
             charm=charm,
             relationship_name=UPSTREAM_RELATION_NAME,
