@@ -14,7 +14,7 @@ date: 2026-05-04
 
 ## PRs
 
-- [x] PR 001 — Fix old-interface protocol: tasks 001, 002, 003, 004, 005
+- [x] PR 001 — Fix old-interface protocol: tasks 001, 002, 003, 004, 005 (reviewed)
 
 ## Task checklist
 
