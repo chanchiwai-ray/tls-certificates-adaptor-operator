@@ -20,6 +20,7 @@ class CertificateRequest(BaseModel):
     cert_type: Literal["server"]
     requirer_unit_name: str
     relation_id: int
+    is_legacy: bool = False
 
 
 class IssuedCertificate(BaseModel):
