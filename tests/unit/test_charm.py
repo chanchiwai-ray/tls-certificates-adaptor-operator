@@ -976,3 +976,175 @@ class TestCertificatesRelationBroken:
         out = context.run(context.on.relation_broken(old_relation), state_in)
 
         assert len(out.secrets) == len(state_in.secrets)
+
+
+class TestBuildFullCaPem:
+    """Tests for TLSCertificateAdaptorCharm._build_full_ca_pem()."""
+
+    def _make_mapping_secret(
+        self,
+        csr_pem: str,
+        old_relation_id: int,
+        is_legacy: bool = False,
+    ) -> ops.testing.Secret:
+        label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
+        return ops.testing.Secret(
+            label=label,
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/0",
+                "relation-id": str(old_relation_id),
+                JUJU_SECRET_IS_LEGACY_KEY: "true" if is_legacy else "false",
+            },
+        )
+
+    def test_intermediate_ca_appended_to_root_ca(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        intermediate_ca_certificate: Certificate,
+        intermediate_ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: event.ca is the root CA; event.chain contains leaf + intermediate (distinct).
+        act: Fire certificate_available.
+        assert: 'ca' bundle contains BOTH root and intermediate CA (append branch exercised).
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        leaf_cert = sign_csr(csr_pem, intermediate_ca_certificate, intermediate_ca_private_key)
+        mapping_secret = self._make_mapping_secret(csr_pem, old_relation.id)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=leaf_cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[leaf_cert, intermediate_ca_certificate],
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(old_relation.id)
+        assert out_rel is not None
+        ca_bundle = out_rel.local_unit_data.get("ca", "")
+        assert str(ca_certificate) in ca_bundle, "root CA must be in bundle"
+        assert str(intermediate_ca_certificate) in ca_bundle, "intermediate CA must be appended"
+        assert str(leaf_cert) not in ca_bundle, "leaf must not appear in ca bundle"
+
+    def test_duplicate_ca_not_appended_twice(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: event.ca and event.chain both contain the same CA cert (dedup short-circuit).
+        act: Fire certificate_available.
+        assert: The CA cert appears exactly once in the written 'ca' bundle.
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+        mapping_secret = self._make_mapping_secret(csr_pem, old_relation.id)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],  # same CA in both ca and chain → dedup
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(old_relation.id)
+        assert out_rel is not None
+        ca_bundle = out_rel.local_unit_data.get("ca", "")
+        assert ca_bundle.count("BEGIN CERTIFICATE") == 1, "CA must appear exactly once"
+
+    def test_extra_ca_from_config_appended(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+        intermediate_ca_certificate: Certificate,
+    ):
+        """
+        arrange: ca-certificates config contains a root CA PEM not in event.chain.
+        act: Fire certificate_available.
+        assert: Both event.ca and the config CA appear in the written 'ca' bundle.
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+        mapping_secret = self._make_mapping_secret(csr_pem, old_relation.id)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+            config={"ca-certificates": str(intermediate_ca_certificate)},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(old_relation.id)
+        assert out_rel is not None
+        ca_bundle = out_rel.local_unit_data.get("ca", "")
+        assert str(ca_certificate) in ca_bundle
+        assert str(intermediate_ca_certificate) in ca_bundle
+
+
+class TestConfigChanged:
+    """Tests for _on_config_changed."""
+
+    def test_config_changed_without_upstream_sets_waiting_status(
+        self, context: ops.testing.Context
+    ):
+        """
+        arrange: No upstream relation; ca-certificates config updated.
+        act: Run config_changed.
+        assert: Unit status is WaitingStatus; no error raised (debug log emitted for no certs).
+        """
+        state_out = context.run(
+            context.on.config_changed(),
+            ops.testing.State(config={"ca-certificates": "ROOT_CA_PEM"}),
+        )
+        assert state_out.unit_status == ops.WaitingStatus("Waiting for upstream TLS provider")

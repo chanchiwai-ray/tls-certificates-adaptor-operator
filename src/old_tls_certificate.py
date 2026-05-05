@@ -99,7 +99,7 @@ class OldTLSCertificatesRelation:
                 requests.append(
                     CertificateRequest(
                         common_name=f"{app_name}-client",
-                        sans_dns=[],
+                        sans=[],
                         cert_type="client",
                         requirer_unit_name=f"{app_name}/client",
                         relation_id=relation.id,
@@ -136,7 +136,7 @@ class OldTLSCertificatesRelation:
             sans = []
         return CertificateRequest(
             common_name=cn,
-            sans_dns=[str(s) for s in sans],
+            sans=[str(s) for s in sans],
             cert_type=OLD_INTERFACE_CERT_TYPE,
             requirer_unit_name=unit_name,
             relation_id=relation_id,
@@ -175,7 +175,7 @@ class OldTLSCertificatesRelation:
             return []
         results: list[CertificateRequest] = []
         for batch_cn, req in entries.items():
-            if not batch_cn or not isinstance(req, dict):
+            if not batch_cn.strip() or not isinstance(req, dict):
                 continue
             batch_sans = req.get("sans") or []
             if not isinstance(batch_sans, list):
@@ -189,7 +189,7 @@ class OldTLSCertificatesRelation:
             results.append(
                 CertificateRequest(
                     common_name=batch_cn,
-                    sans_dns=[str(s) for s in batch_sans],
+                    sans=[str(s) for s in batch_sans],
                     cert_type=OLD_INTERFACE_CERT_TYPE,
                     requirer_unit_name=unit_name,
                     relation_id=relation_id,
@@ -206,20 +206,19 @@ class OldTLSCertificatesRelation:
         cert: str,
         key: str,
         ca: str,
-        chain: str = "",
         is_legacy: bool = False,
     ) -> None:
         """Write a signed certificate and private key to the old-interface (v1) provider databag.
 
         For the **legacy** format (``is_legacy=True``), writes individual
         ``{munged}.server.cert`` / ``{munged}.server.key`` keys alongside a
-        top-level ``ca`` key (and optional ``chain``), which is what the
-        reactive ``server_certs`` property reads.
+        top-level ``ca`` key, which is what the reactive ``server_certs``
+        property reads.
 
         For the **batch** format (``is_legacy=False``), merges the new cert
         into the ``{munged}.processed_requests`` dict so that multiple CNs
         from the same requirer unit accumulate in a single key, plus top-level
-        ``ca`` (and optional ``chain``).
+        ``ca``.
 
         Args:
             relation_id: ID of the old-interface relation to write to.
@@ -228,7 +227,6 @@ class OldTLSCertificatesRelation:
             cert: PEM-encoded signed certificate.
             key: PEM-encoded private key.
             ca: PEM-encoded CA certificate.
-            chain: Optional PEM-encoded concatenated certificate chain.
             is_legacy: When True use the legacy single-cert key format; when
                 False use the batch ``processed_requests`` dict format.
         """

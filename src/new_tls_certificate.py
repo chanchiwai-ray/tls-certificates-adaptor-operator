@@ -62,7 +62,7 @@ class NewTLSCertificatesRelation:
         self._charm = charm
         cert_request_attrs = []
         for cr in certificate_requests:
-            dns_sans, ip_sans = classify_sans(cr.sans_dns)
+            dns_sans, ip_sans = classify_sans(cr.sans)
             cert_request_attrs.append(
                 CertificateRequestAttributes(
                     common_name=cr.common_name,

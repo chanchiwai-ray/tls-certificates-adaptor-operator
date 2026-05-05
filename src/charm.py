@@ -126,7 +126,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         for cr in state.certificate_requests if state else []:
             if cr.relation_id != relation.id:
                 continue
-            csr_pem = build_csr(self._charm_key_pem, cr.common_name, cr.sans_dns)
+            csr_pem = build_csr(self._charm_key_pem, cr.common_name, cr.sans)
             fingerprints.append(csr_sha256_hex(csr_pem))
             if get_csr_mapping(self, csr_pem) is not None:
                 logger.debug(
@@ -206,8 +206,9 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         ca_certs = [str(c) for c in chain if str(c) != leaf_pem] if chain else []
         full_ca_pem = ca
         for cert_pem in ca_certs:
-            if cert_pem not in full_ca_pem:
-                full_ca_pem = full_ca_pem + "\n" + cert_pem
+            stripped = cert_pem.strip()
+            if stripped not in full_ca_pem:
+                full_ca_pem = full_ca_pem + "\n" + stripped
         # Append any operator-supplied extra CA certs (e.g. the root CA when the upstream
         # provider only delivers an intermediate CA and does not include the root in chain).
         extra_ca = str(self.config.get("ca-certificates") or "").strip()
@@ -232,6 +233,11 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 str(first.ca), first.chain, str(first.certificate)
             )
             self._old_handler.write_ca(ca=full_ca_pem)
+        else:
+            logger.debug(
+                "ca-certificates config updated but no upstream provider certs available yet; "
+                "CA bundle will be applied on next certificate_available event"
+            )
         self.reconcile(event)
 
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
@@ -282,7 +288,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 key=private_key_pem,
             )
         else:
-            chain_pem = "\n".join(str(c) for c in event.chain) if event.chain else ""
             self._old_handler.write_certificate(
                 relation_id=relation_id,
                 requirer_unit_name=requirer_unit_name,
@@ -290,7 +295,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 cert=str(event.certificate),
                 key=private_key_pem,
                 ca=full_ca_pem,
-                chain=chain_pem,
                 is_legacy=is_legacy,
             )
         self._old_handler.write_ca(ca=full_ca_pem)

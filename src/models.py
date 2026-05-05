@@ -16,7 +16,7 @@ class CertificateRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     common_name: str
-    sans_dns: list[str]
+    sans: list[str]
     cert_type: Literal["server", "client"]
     requirer_unit_name: str
     relation_id: int

@@ -51,7 +51,7 @@ class TestGetCertificateRequests:
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
         assert server_req.common_name == "keystone.internal"
-        assert server_req.sans_dns == ["keystone.internal"]
+        assert server_req.sans == ["keystone.internal"]
         assert server_req.cert_type == "server"
         assert server_req.requirer_unit_name == "keystone/0"
         assert server_req.relation_id == 5
@@ -111,7 +111,7 @@ class TestGetCertificateRequests:
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
         assert server_req.common_name == "cinder.internal"
-        assert server_req.sans_dns == ["10.149.56.105"]
+        assert server_req.sans == ["10.149.56.105"]
         assert server_req.is_legacy is True
         client_req = next(r for r in requests if r.is_client)
         assert client_req.common_name == "cinder-client"
@@ -196,7 +196,7 @@ class TestGetCertificateRequests:
         """
         arrange: Legacy databag with common_name set but sans is not valid JSON.
         act: Call get_certificate_requests.
-        assert: Returns one CertificateRequest with sans_dns=[] and is_legacy=True.
+        assert: Returns one CertificateRequest with sans=[] and is_legacy=True.
         """
         from old_tls_certificate import OldTLSCertificatesRelation
 
@@ -210,7 +210,7 @@ class TestGetCertificateRequests:
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
         assert server_req.common_name == "cn1.internal"
-        assert server_req.sans_dns == []
+        assert server_req.sans == []
         assert server_req.is_legacy is True
         client_req = next(r for r in requests if r.is_client)
         assert client_req.common_name == "keystone-client"
@@ -219,7 +219,7 @@ class TestGetCertificateRequests:
         """
         arrange: Batch dict where sans is a plain string, not a list.
         act: Call get_certificate_requests.
-        assert: Returns one request with sans_dns wrapping the string in a list.
+        assert: Returns one request with sans wrapping the string in a list.
         """
         from old_tls_certificate import OldTLSCertificatesRelation
 
@@ -231,7 +231,7 @@ class TestGetCertificateRequests:
 
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
-        assert server_req.sans_dns == ["10.0.0.1"]
+        assert server_req.sans == ["10.0.0.1"]
         assert server_req.is_legacy is False
         client_req = next(r for r in requests if r.is_client)
         assert client_req.common_name == "keystone-client"
@@ -335,11 +335,11 @@ class TestWriteCertificate:
         assert local_databag["ca"] == "CA_PEM"
         assert "cinder_0.processed_requests" not in local_databag
 
-    def test_write_certificate_no_chain_omits_chain_key(self):
+    def test_write_certificate_never_writes_chain_key(self):
         """
         arrange: A mock relation with an empty databag.
-        act: Call write_certificate with chain=''.
-        assert: The 'chain' key is NOT written to the databag.
+        act: Call write_certificate.
+        assert: The 'chain' key is NOT written to the databag (v1 interface has no chain field).
         """
         from old_tls_certificate import OldTLSCertificatesRelation
 
@@ -351,7 +351,6 @@ class TestWriteCertificate:
             cert="CERT",
             key="KEY",
             ca="CA",
-            chain="",
             is_legacy=False,
         )
 
@@ -377,6 +376,30 @@ class TestWriteCertificate:
             ca="CA",
         )
         # Should not raise
+
+    def test_write_certificate_batch_corrupt_existing_resets(self):
+        """
+        arrange: A databag whose processed_requests value is invalid JSON.
+        act: Call write_certificate with is_legacy=False.
+        assert: The corrupt value is discarded; the new CN is stored cleanly.
+        """
+        from old_tls_certificate import OldTLSCertificatesRelation
+
+        charm, local_databag = self._make_charm_for_write(relation_id=1)
+        local_databag["keystone_0.processed_requests"] = "not-valid-json"
+
+        OldTLSCertificatesRelation(charm).write_certificate(
+            relation_id=1,
+            requirer_unit_name="keystone/0",
+            common_name="keystone.internal",
+            cert="CERT",
+            key="KEY",
+            ca="CA",
+            is_legacy=False,
+        )
+
+        content = json.loads(local_databag["keystone_0.processed_requests"])
+        assert content == {"keystone.internal": {"cert": "CERT", "key": "KEY"}}
 
 
 class TestWriteCa:
@@ -410,3 +433,100 @@ class TestWriteCa:
         for db in databags:
             assert db["ca"] == "CA_PEM"
             assert "chain" not in db
+
+
+class TestWriteClientCert:
+    """Tests for OldTLSCertificatesRelation.write_client_cert()."""
+
+    def test_write_client_cert_unknown_relation_logs_warning(self):
+        """
+        arrange: charm.model.get_relation returns None.
+        act: Call write_client_cert.
+        assert: No exception raised; nothing written.
+        """
+        from old_tls_certificate import OldTLSCertificatesRelation
+
+        charm = MagicMock(spec=ops.CharmBase)
+        charm.model.get_relation.return_value = None
+
+        OldTLSCertificatesRelation(charm).write_client_cert(
+            relation_id=999, cert="CERT", key="KEY"
+        )
+        # Should not raise
+
+
+class TestGetCertificateRequestsEdgeCases:
+    """Additional edge-case tests for get_certificate_requests()."""
+
+    def test_legacy_sans_valid_json_but_not_a_list(self):
+        """
+        arrange: Legacy databag where sans is valid JSON but not a list (e.g. a quoted string).
+        act: Call get_certificate_requests.
+        assert: Request is returned with sans=[] and a warning is logged.
+        """
+        from old_tls_certificate import OldTLSCertificatesRelation
+
+        relation = _make_relation(
+            "keystone/0", {"common_name": "cn.internal", "sans": '"not-a-list"'}
+        )
+        charm = _make_charm_for_get([relation])
+
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
+
+        server_req = next(r for r in requests if not r.is_client)
+        assert server_req.common_name == "cn.internal"
+        assert server_req.sans == []
+
+    def test_batch_empty_cn_is_skipped(self):
+        """
+        arrange: Batch dict with one empty-string CN and one valid CN.
+        act: Call get_certificate_requests.
+        assert: Only the valid CN is returned.
+        """
+        from old_tls_certificate import OldTLSCertificatesRelation
+
+        cert_requests_data = json.dumps({"": {"sans": ["10.0.0.1"]}, "cn.internal": {"sans": []}})
+        relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
+        charm = _make_charm_for_get([relation])
+
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
+
+        server_reqs = [r for r in requests if not r.is_client]
+        assert len(server_reqs) == 1
+        assert server_reqs[0].common_name == "cn.internal"
+
+    def test_batch_non_dict_value_is_skipped(self):
+        """
+        arrange: Batch dict where the value for a CN is not a dict.
+        act: Call get_certificate_requests.
+        assert: That CN is skipped; no server or client requests returned.
+        """
+        from old_tls_certificate import OldTLSCertificatesRelation
+
+        cert_requests_data = json.dumps({"cn.internal": "not-a-dict"})
+        relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
+        charm = _make_charm_for_get([relation])
+
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
+
+        assert requests == []
+
+    def test_batch_whitespace_only_cn_is_skipped(self):
+        """
+        arrange: Batch dict with a whitespace-only CN and one valid CN.
+        act: Call get_certificate_requests.
+        assert: The whitespace-only CN is rejected; only the valid CN is returned.
+        """
+        from old_tls_certificate import OldTLSCertificatesRelation
+
+        cert_requests_data = json.dumps(
+            {"   ": {"sans": ["10.0.0.1"]}, "cn.internal": {"sans": []}}
+        )
+        relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
+        charm = _make_charm_for_get([relation])
+
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
+
+        server_reqs = [r for r in requests if not r.is_client]
+        assert len(server_reqs) == 1
+        assert server_reqs[0].common_name == "cn.internal"
