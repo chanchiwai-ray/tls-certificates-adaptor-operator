@@ -70,7 +70,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         self.tls_certificates = self._upstream_handler.tls_certificates
 
         self.framework.observe(self.on.install, self.reconcile)
-        self.framework.observe(self.on.config_changed, self.reconcile)
+        self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(
             self.on[OLD_INTERFACE_RELATION_NAME].relation_changed,
@@ -184,6 +184,56 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             self._process_old_interface_relation(relation)
         self.reconcile(event)
 
+    def _build_full_ca_pem(self, ca: str, chain: list, leaf_pem: str) -> str:
+        """Build a full CA certificate bundle from the upstream provider data and config.
+
+        Strips the leaf cert from *chain*, then appends any CA certs not already
+        present in *ca*.  Finally appends the operator-supplied ``ca-certificates``
+        config (e.g. a root CA missing from the upstream provider's chain) if set.
+
+        Args:
+            ca: PEM-encoded CA certificate from the upstream provider.
+            chain: List of Certificate objects from the upstream provider.
+            leaf_pem: PEM string of the leaf certificate to exclude from the chain.
+
+        Returns:
+            PEM bundle containing all CA certs needed to verify the leaf cert.
+        """
+        # Build the full CA chain (all CA certs from immediate issuer to root) by
+        # stripping the leaf cert from chain.  The old reactive tls-certificates (v1)
+        # interface only reads the "ca" key and ignores "chain", so we concatenate all
+        # CA certs into a single PEM bundle.
+        ca_certs = [str(c) for c in chain if str(c) != leaf_pem] if chain else []
+        full_ca_pem = ca
+        for cert_pem in ca_certs:
+            if cert_pem not in full_ca_pem:
+                full_ca_pem = full_ca_pem + "\n" + cert_pem
+        # Append any operator-supplied extra CA certs (e.g. the root CA when the upstream
+        # provider only delivers an intermediate CA and does not include the root in chain).
+        extra_ca = str(self.config.get("ca-certificates") or "").strip()
+        if extra_ca and extra_ca not in full_ca_pem:
+            full_ca_pem = full_ca_pem + "\n" + extra_ca
+        return full_ca_pem
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Re-write the CA bundle to all old-interface relations when config changes.
+
+        When the operator updates ``ca-certificates`` (e.g. to add a root CA that
+        the upstream provider omits from its chain), this handler rebuilds the full
+        CA bundle from the current upstream provider certificates and re-writes it
+        to every active old-interface relation databag so that downstream charms
+        pick up the change without waiting for a certificate renewal.
+        """
+        provider_certs = self._upstream_handler.get_provider_certificates()
+        if provider_certs:
+            # All certs share the same CA hierarchy; use the first one to rebuild the bundle.
+            first = provider_certs[0]
+            full_ca_pem = self._build_full_ca_pem(
+                str(first.ca), first.chain, str(first.certificate)
+            )
+            self._old_handler.write_ca(ca=full_ca_pem)
+        self.reconcile(event)
+
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
         """Deliver a signed certificate to the old-interface requirer.
 
@@ -223,17 +273,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             return
 
         leaf_pem = str(event.certificate)
-        # Build the full CA chain (all CA certs from immediate issuer to root) by stripping
-        # the leaf cert from event.chain.  The old reactive tls-certificates (v1) interface
-        # only reads the "ca" key and ignores "chain", so we concatenate all CA certs into
-        # a single PEM bundle and write that to "ca".  This also matches the old vault
-        # behaviour where a single root CA cert was all that was needed.
-        ca_certs = [str(c) for c in event.chain if str(c) != leaf_pem] if event.chain else []
-        # Prepend event.ca if it is not already in the chain list to avoid duplication.
-        full_ca_pem = str(event.ca)
-        for cert_pem in ca_certs:
-            if cert_pem not in full_ca_pem:
-                full_ca_pem = full_ca_pem + "\n" + cert_pem
+        full_ca_pem = self._build_full_ca_pem(str(event.ca), event.chain, leaf_pem)
 
         if is_client:
             self._old_handler.write_client_cert(
