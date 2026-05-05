@@ -37,7 +37,6 @@ from constants import (
     CSR_FINGERPRINTS_KEY,
     LEGACY_CERT_SUFFIX,
     LEGACY_KEY_SUFFIX,
-    OLD_INTERFACE_CERT_TYPE,
     OLD_INTERFACE_RELATION_NAME,
     PROCESSED_REQUESTS_SUFFIX,
 )
@@ -106,7 +105,6 @@ class OldTLSCertificatesRelation:
                     CertificateRequest(
                         common_name=f"{app_name}-client",
                         sans=[],
-                        cert_type="client",
                         requirer_unit_name=f"{app_name}/client",
                         relation_id=relation.id,
                         is_client=True,
@@ -371,7 +369,6 @@ class OldTLSCertificatesRelation:
         return CertificateRequest(
             common_name=cn,
             sans=[str(s) for s in sans],
-            cert_type=OLD_INTERFACE_CERT_TYPE,
             requirer_unit_name=unit_name,
             relation_id=relation_id,
             is_legacy=True,
@@ -430,7 +427,6 @@ class OldTLSCertificatesRelation:
                 CertificateRequest(
                     common_name=batch_cn,
                     sans=[str(s) for s in batch_sans],
-                    cert_type=OLD_INTERFACE_CERT_TYPE,
                     requirer_unit_name=unit_name,
                     relation_id=relation_id,
                     is_legacy=False,

@@ -54,7 +54,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         self._upstream_handler = NewTLSCertificatesRelation(
             self,
             self._charm_key_pem,
-            self.state.certificate_requests,
+            self._old_handler.get_certificate_requests(),
         )
         self.tls_certificates = self._upstream_handler.tls_certificates
 

@@ -34,7 +34,6 @@ def _make_requests(*common_names: str) -> list[CertificateRequest]:
         CertificateRequest(
             common_name=cn,
             sans=[cn],
-            cert_type="server",
             requirer_unit_name="keystone/0",
             relation_id=1,
         )

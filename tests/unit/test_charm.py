@@ -226,7 +226,8 @@ class TestCertificatesRelationChangedCsrMapping:
             secrets={key_secret, existing_mapping, existing_client_mapping},
         )
 
-        context.run(context.on.relation_changed(relation=relation), state)
+        out = context.run(context.on.relation_changed(relation=relation), state)
+        assert len(out.secrets) == len(state.secrets)
 
     def test_two_requesters_each_get_their_own_mapping_secret(
         self, context: ops.testing.Context, key_secret: ops.testing.Secret
@@ -1157,3 +1158,44 @@ class TestConfigChanged:
             ops.testing.State(config={"ca-certificates": "ROOT_CA_PEM"}),
         )
         assert state_out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")
+
+    def test_config_changed_writes_ca_bundle_when_upstream_has_issued_certs(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_private_key,
+        ca_certificate,
+    ):
+        """
+        arrange: Upstream relation app databag contains an issued certificate.
+        act: Run config_changed.
+        assert: The CA cert is written to the old-interface relation's local unit databag.
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+        upstream_relation = ops.testing.Relation(
+            endpoint=UPSTREAM_RELATION_NAME,
+            remote_app_data={
+                "certificates": json.dumps(
+                    [
+                        {
+                            "ca": str(ca_certificate),
+                            "certificate_signing_request": csr_pem,
+                            "certificate": str(cert),
+                            "chain": None,
+                        }
+                    ]
+                ),
+            },
+        )
+        old_relation = ops.testing.Relation(endpoint=OLD_INTERFACE_RELATION_NAME)
+        state = ops.testing.State(
+            relations={upstream_relation, old_relation},
+            secrets={key_secret},
+        )
+
+        out = context.run(context.on.config_changed(), state)
+
+        out_old_rel = out.get_relation(old_relation.id)
+        assert out_old_rel is not None
+        assert str(ca_certificate) in out_old_rel.local_unit_data.get("ca", "")

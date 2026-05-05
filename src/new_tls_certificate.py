@@ -10,6 +10,11 @@ own private key, sends a Certificate Signing Request (CSR), and receives back
 only the signed certificate together with the CA and chain.  The library
 handles CSR submission, renewal scheduling, and event dispatch.
 
+Certificate renewal is managed internally by the library: when ``secret_expired``
+fires for a provider-managed secret, or when a ``refresh_events`` hook runs,
+the library automatically re-submits the CSR.  The adaptor charm does not need
+to implement any explicit renewal logic.
+
 This module provides :class:`NewTLSCertificatesRelation`, which wraps the
 library to expose only the operations needed by the adaptor charm and
 translates :class:`~charmlibs.interfaces.tls_certificates.ProviderCertificate`
@@ -29,7 +34,6 @@ from charmlibs.interfaces.tls_certificates import (
     CertificateDeniedEvent,
     CertificateRequestAttributes,
     PrivateKey,
-    ProviderCertificate,
     TLSCertificatesRequiresV4,
 )
 
@@ -101,14 +105,6 @@ class NewTLSCertificatesRelation:
         """The underlying TLSCertificatesRequiresV4 library instance."""
         return self._tls
 
-    def get_provider_certificates(self) -> list[ProviderCertificate]:
-        """Return all provider certificates currently assigned by the upstream provider.
-
-        Returns:
-            list[ProviderCertificate]: A list of ProviderCertificate objects from the upstream (v4) relation.
-        """
-        return self._tls.get_provider_certificates()
-
     def get_issued_certificates(self) -> dict[str, IssuedCertificate]:
         """Return issued certificates keyed by CSR SHA-256 hex fingerprint.
 
@@ -130,14 +126,6 @@ class NewTLSCertificatesRelation:
                 chain=[str(c) for c in pc.chain],
             )
         return issued
-
-    def renew_certificate(self, certificate: ProviderCertificate) -> None:
-        """Request renewal of an existing certificate from the upstream (v4) provider.
-
-        Args:
-            certificate (ProviderCertificate): The ProviderCertificate to renew.
-        """
-        self._tls.renew_certificate(certificate)
 
     def handle_certificate_available(
         self,
