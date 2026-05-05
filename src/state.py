@@ -11,8 +11,8 @@ from abc import ABC, abstractmethod
 import ops
 from pydantic import BaseModel, ConfigDict
 
-from models import CertificateRequest, IssuedCertificate  # noqa: TC001
-from new_tls_certificate import NewTLSCertificatesRelation  # noqa: TC001
+from config import CharmConfig
+from models import CertificateRequest  # noqa: TC001
 from old_tls_certificate import OldTLSCertificatesRelation  # noqa: TC001
 
 logger = logging.getLogger(__name__)
@@ -24,34 +24,36 @@ class CharmState(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     certificate_requests: list[CertificateRequest]
-    issued_certificates: dict[str, IssuedCertificate]  # keyed by CSR SHA-256 hex fingerprint
+    csr_fingerprints: dict[int, list[str]] = {}  # keyed by relation_id
+    extra_ca_certificates: str = ""
 
     @classmethod
     def from_charm(
         cls,
+        charm: ops.CharmBase,
         old_handler: OldTLSCertificatesRelation,
-        upstream: NewTLSCertificatesRelation,
     ) -> CharmState:
-        """Build a CharmState from pre-constructed relation handlers.
+        """Build a CharmState from the charm instance and the old-interface relation handler.
 
-        Accepts handlers rather than a raw charm instance so that the state
-        module has no direct dependency on how the handlers are constructed
+        Loads charm configuration and aggregates relation data into a single
+        state object.  Accepts the handler rather than instantiating it here
         (dependency injection).
 
         Args:
-            old_handler: Handler for all active old-interface (v1) relations.
+            charm (ops.CharmBase): The charm instance, used to load configuration.
+            old_handler (OldTLSCertificatesRelation): Handler for all active old-interface (v1) relations.
                 Reads cert requests from all remote-unit databags across every
                 active relation.
-            upstream: Handler for the modern upstream tls-certificates (v4)
-                relation.  Provides currently-issued certificates.
 
         Returns:
-            A CharmState with all pending certificate requests and currently
-            issued certificates.
+            CharmState: A CharmState with all pending certificate requests and resolved configuration.
         """
+        charm_config = CharmConfig.from_charm(charm)
+        certificate_requests = old_handler.get_certificate_requests()
         return cls(
-            certificate_requests=old_handler.get_certificate_requests(),
-            issued_certificates=upstream.get_issued_certificates(),
+            certificate_requests=certificate_requests,
+            csr_fingerprints=old_handler.get_csr_fingerprints(certificate_requests),
+            extra_ca_certificates=charm_config.ca_certificates,
         )
 
 

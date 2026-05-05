@@ -4,7 +4,6 @@
 """Project-wide constants."""
 
 CERT_REQUEST_KEY = "cert_requests"
-OLD_INTERFACE_CERT_TYPE = "server"
 OLD_INTERFACE_RELATION_NAME = "certificates"
 UPSTREAM_RELATION_NAME = "certificates-upstream"
 
