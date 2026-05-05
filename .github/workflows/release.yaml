@@ -32,7 +32,7 @@ jobs:
           echo "CHARM_NAMES=$(ls built-charm/*.charm | paste -sd ,)" | tee -a "$GITHUB_ENV"
 
       - name: Upload charm to Charmhub
-        uses: canonical/charming-actions/upload-charm@2.6.0
+        uses: canonical/charming-actions/upload-charm@2.7.0
         with:
           channel: latest/edge
           credentials: ${{ secrets.CHARMHUB_TOKEN }}
