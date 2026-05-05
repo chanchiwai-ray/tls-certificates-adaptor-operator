@@ -11,6 +11,13 @@ from old_tls_certificate import OldTLSCertificatesRelation
 from state import CharmState
 
 
+def _make_charm(ca_certificates: str = "") -> MagicMock:
+    """Return a mock ops.CharmBase whose config returns *ca_certificates* for 'ca-certificates'."""
+    mock = MagicMock()
+    mock.config.get.return_value = ca_certificates
+    return mock
+
+
 def _make_upstream(issued: dict | None = None) -> MagicMock:
     """Return a mock NewTLSCertificatesRelation that returns *issued* from get_issued_certificates."""
     mock = MagicMock(spec=NewTLSCertificatesRelation)
@@ -50,10 +57,11 @@ class TestCharmState:
         act: Call CharmState.from_charm with empty lists/mocks.
         assert: certificate_requests and issued_certificates are empty.
         """
-        state = CharmState.from_charm(_make_old_handler(), _make_upstream())
+        state = CharmState.from_charm(_make_charm(), _make_old_handler(), _make_upstream())
 
         assert state.certificate_requests == []
         assert state.issued_certificates == {}
+        assert state.extra_ca_certificates == ""
 
     def test_one_relation_with_requests_captured(self):
         """
@@ -63,7 +71,7 @@ class TestCharmState:
         """
         handler = _make_old_handler(_make_requests("keystone.internal", "nova.internal"))
 
-        state = CharmState.from_charm(handler, _make_upstream())
+        state = CharmState.from_charm(_make_charm(), handler, _make_upstream())
 
         assert len(state.certificate_requests) == 2
         common_names = {r.common_name for r in state.certificate_requests}
@@ -76,7 +84,7 @@ class TestCharmState:
         act: Call CharmState.from_charm.
         assert: certificate_requests is empty.
         """
-        state = CharmState.from_charm(_make_old_handler(), _make_upstream())
+        state = CharmState.from_charm(_make_charm(), _make_old_handler(), _make_upstream())
 
         assert state.certificate_requests == []
 
@@ -94,18 +102,18 @@ class TestCharmState:
             )
         }
 
-        state = CharmState.from_charm(_make_old_handler(), _make_upstream(issued))
+        state = CharmState.from_charm(_make_charm(), _make_old_handler(), _make_upstream(issued))
 
         assert state.issued_certificates == issued
 
-    def test_requests_from_multiple_relations_aggregated(self):
+    def test_extra_ca_certificates_loaded_from_config(self):
         """
-        arrange: Handler returning CertificateRequests from two different relations.
+        arrange: Charm config has a non-empty ca-certificates value.
         act: Call CharmState.from_charm.
-        assert: All requests are captured in the state.
+        assert: extra_ca_certificates is populated from the charm config.
         """
-        handler = _make_old_handler(_make_requests("keystone.internal", "nova.internal"))
+        state = CharmState.from_charm(
+            _make_charm("ROOT_CA_PEM"), _make_old_handler(), _make_upstream()
+        )
 
-        state = CharmState.from_charm(handler, _make_upstream())
-
-        assert len(state.certificate_requests) == 2
+        assert state.extra_ca_certificates == "ROOT_CA_PEM"
