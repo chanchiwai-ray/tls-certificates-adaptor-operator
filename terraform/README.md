@@ -18,24 +18,24 @@ environment managed by [Juju][Juju].
 
 ## Using tls-certificate-adaptor base module in higher level modules
 
-If you want to use `tls-certificate-adaptor` base module as part of your Terraform module, import it like shown below:
+If you want to use `tls-certificates-adaptor` base module as part of your Terraform module, import it like shown below:
 
 ```text
 data "juju_model" "my_model" {
   name = var.model
 }
 
-module "tls-certificate-adaptor" {
-  source = "git::https://github.com/chanchiwai-ray/tls-certificate-adaptor-operator//terraform"
+module "tls-certificates-adaptor" {
+  source = "git::https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator//terraform"
 
   model = juju_model.my_model.name
   # (Customize configuration variables here if needed)
 }
 ```
 
-The complete list of available integrations can be found [in the Integrations tab][tls-certificate-adaptor-integrations].
+The complete list of available integrations can be found [in the Integrations tab][tls-certificates-adaptor-integrations].
 
 [Juju]: https://juju.is
 [Terraform]: https://developer.hashicorp.com/terraform
 [Terraform Juju provider]: https://registry.terraform.io/providers/juju/juju/latest
-[tls-certificate-adaptor-integrations]: https://charmhub.io/tls-certificate-adaptor/integrations
+[tls-certificates-adaptor-integrations]: https://charmhub.io/tls-certificates-adaptor/integrations
