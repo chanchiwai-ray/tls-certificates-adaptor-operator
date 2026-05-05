@@ -1,8 +1,8 @@
-<!-- Remember to update this file for your charm -- replace tls-certificate-adaptor and chanchiwai-ray/tls-certificate-adaptor-operator with the appropriate text. -->
+<!-- Remember to update this file for your charm -- replace tls-certificates-adaptor and chanchiwai-ray/tls-certificates-adaptor-operator with the appropriate text. -->
 
-# tls-certificate-adaptor Terraform module
+# tls-certificates-adaptor Terraform module
 
-This folder contains a base [Terraform][Terraform] module for the tls-certificate-adaptor charm.
+This folder contains a base [Terraform][Terraform] module for the tls-certificates-adaptor charm.
 
 The module uses the [Terraform Juju provider][Terraform Juju provider] to model the charm deployment onto any Kubernetes
 environment managed by [Juju][Juju].
@@ -16,7 +16,7 @@ environment managed by [Juju][Juju].
   endpoints (charm integrations), but also by exposing the Juju application name.
 - **versions.tf** - Defines the Terraform provider version.
 
-## Using tls-certificate-adaptor base module in higher level modules
+## Using tls-certificates-adaptor base module in higher level modules
 
 If you want to use `tls-certificates-adaptor` base module as part of your Terraform module, import it like shown below:
 

@@ -86,7 +86,7 @@ juju config tls-certificates-adaptor ca-certificates="$(cat /path/to/root-ca.pem
 
 ## Project and community
 
-- [Issues](https://github.com/chanchiwai-ray/tls-certificate-adaptor-operator/issues)
+- [Issues](https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator/issues)
 - [Contributing](CONTRIBUTING.md)
 - [Matrix](https://matrix.to/#/#charmhub-charmdev:ubuntu.com)
 

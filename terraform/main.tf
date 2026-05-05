@@ -1,7 +1,7 @@
 # Copyright 2026 Chi Wai Chan
 # See LICENSE file for licensing details.
 
-resource "juju_application" "tls-certificates-adaptor" {
+resource "juju_application" "tls_certificates_adaptor" {
   name       = var.app_name
   model_uuid = var.model_uuid
 
