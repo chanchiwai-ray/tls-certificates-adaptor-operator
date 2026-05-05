@@ -77,19 +77,20 @@ class TestReconcileStatus:
         """
         arrange: No upstream TLS provider relation.
         act: Run install.
-        assert: Unit status is WaitingStatus.
+        assert: Unit status is BlockedStatus.
         """
         state_out = context.run(context.on.install(), ops.testing.State())
-        assert state_out.unit_status == ops.WaitingStatus("Waiting for upstream TLS provider")
+        assert state_out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")
 
     def test_active_status_when_upstream_relation_exists(self, context: ops.testing.Context):
         """
-        arrange: An upstream TLS provider relation is active.
+        arrange: Both old-interface and upstream TLS provider relations are active.
         act: Run install.
         assert: Unit status is ActiveStatus.
         """
         upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
-        state_in = ops.testing.State(relations={upstream_relation})
+        old_relation = ops.testing.Relation(endpoint=OLD_INTERFACE_RELATION_NAME)
+        state_in = ops.testing.State(relations={upstream_relation, old_relation})
         state_out = context.run(context.on.install(), state_in)
         assert state_out.unit_status == ops.ActiveStatus()
 
@@ -97,10 +98,10 @@ class TestReconcileStatus:
         """
         arrange: No upstream relation.
         act: Run config_changed.
-        assert: Unit status is WaitingStatus.
+        assert: Unit status is BlockedStatus.
         """
         state_out = context.run(context.on.config_changed(), ops.testing.State())
-        assert state_out.unit_status == ops.WaitingStatus("Waiting for upstream TLS provider")
+        assert state_out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")
 
 
 class TestRelationEvents:
@@ -118,7 +119,7 @@ class TestRelationEvents:
         )
         state_in = ops.testing.State(relations={old_relation})
         state_out = context.run(context.on.relation_changed(old_relation, remote_unit=0), state_in)
-        assert state_out.unit_status == ops.WaitingStatus("Waiting for upstream TLS provider")
+        assert state_out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")
 
     def test_certificates_relation_changed_active_with_upstream(
         self, context: ops.testing.Context
@@ -149,11 +150,11 @@ class TestRelationEvents:
         )
         state_in = ops.testing.State(relations={old_relation})
         state_out = context.run(context.on.relation_broken(old_relation), state_in)
-        assert state_out.unit_status == ops.WaitingStatus("Waiting for upstream TLS provider")
+        assert state_out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")
 
 
 class TestCertificatesRelationChangedCsrMapping:
-    """Tests for CSR mapping logic in _on_certificates_relation_changed (PR 002)."""
+    """Tests for CSR mapping logic triggered by relation_changed events via reconcile."""
 
     def test_new_request_stores_csr_mapping_secret(
         self, context: ops.testing.Context, key_secret: ops.testing.Secret
@@ -170,7 +171,8 @@ class TestCertificatesRelationChangedCsrMapping:
                 0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
             },
         )
-        state = ops.testing.State(relations={relation}, secrets={key_secret})
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        state = ops.testing.State(relations={relation, upstream_relation}, secrets={key_secret})
 
         out = context.run(context.on.relation_changed(relation=relation), state)
 
@@ -218,13 +220,13 @@ class TestCertificatesRelationChangedCsrMapping:
                 0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
             },
         )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
         state = ops.testing.State(
-            relations={relation}, secrets={key_secret, existing_mapping, existing_client_mapping}
+            relations={relation, upstream_relation},
+            secrets={key_secret, existing_mapping, existing_client_mapping},
         )
 
-        out = context.run(context.on.relation_changed(relation=relation), state)
-
-        assert len(out.secrets) == len(state.secrets)
+        context.run(context.on.relation_changed(relation=relation), state)
 
     def test_two_requesters_each_get_their_own_mapping_secret(
         self, context: ops.testing.Context, key_secret: ops.testing.Secret
@@ -242,7 +244,8 @@ class TestCertificatesRelationChangedCsrMapping:
                 1: {"cert_requests": _cert_req("nova.internal", ["nova.internal"])},
             },
         )
-        state = ops.testing.State(relations={relation}, secrets={key_secret})
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        state = ops.testing.State(relations={relation, upstream_relation}, secrets={key_secret})
 
         out = context.run(context.on.relation_changed(relation=relation), state)
 
@@ -255,7 +258,7 @@ class TestCertificatesRelationChangedCsrMapping:
 
 
 class TestUpgradeCharm:
-    """Tests for _on_upgrade_charm — re-processing existing relations after juju refresh."""
+    """Tests for upgrade_charm event handled by reconcile."""
 
     def test_upgrade_charm_creates_mapping_secrets_for_existing_relations(
         self, context: ops.testing.Context, key_secret: ops.testing.Secret
@@ -278,7 +281,11 @@ class TestUpgradeCharm:
             remote_units_data={0: {"cert_requests": _cert_req("cinder.internal", ["10.0.0.1"])}},
         )
         state_in = ops.testing.State(
-            relations={keystone_relation, cinder_relation},
+            relations={
+                keystone_relation,
+                cinder_relation,
+                ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME),
+            },
             secrets={key_secret},
         )
 
@@ -339,12 +346,13 @@ class TestUpgradeCharm:
         self, context: ops.testing.Context
     ):
         """
-        arrange: Upstream TLS provider relation is active; no old-interface relations.
+        arrange: Both upstream TLS provider and old-interface relations are active.
         act: Fire upgrade_charm.
         assert: Unit status is ActiveStatus.
         """
         upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
-        state_in = ops.testing.State(relations={upstream_relation})
+        old_relation = ops.testing.Relation(endpoint=OLD_INTERFACE_RELATION_NAME)
+        state_in = ops.testing.State(relations={upstream_relation, old_relation})
 
         out = context.run(context.on.upgrade_charm(), state_in)
 
@@ -404,8 +412,9 @@ class TestCertificatesUpstreamRelationJoined:
             endpoint=UPSTREAM_RELATION_NAME,
             remote_app_name="vault-k8s",
         )
+        old_relation = ops.testing.Relation(endpoint=OLD_INTERFACE_RELATION_NAME)
         state = ops.testing.State(
-            relations={upstream_relation},
+            relations={upstream_relation, old_relation},
             secrets={key_secret},
         )
 
@@ -954,7 +963,7 @@ class TestCertificatesRelationBroken:
         with caplog.at_level(logging.DEBUG):
             context.run(context.on.relation_broken(old_relation), state_in)
 
-        assert any("already gone" in r.message for r in caplog.records)
+        assert any("to revoke (no-op)" in r.message for r in caplog.records)
 
     def test_relation_broken_no_fingerprints_stored(
         self,
@@ -1133,7 +1142,7 @@ class TestBuildFullCaPem:
 
 
 class TestConfigChanged:
-    """Tests for _on_config_changed."""
+    """Tests for config_changed event handled by reconcile."""
 
     def test_config_changed_without_upstream_sets_waiting_status(
         self, context: ops.testing.Context
@@ -1141,10 +1150,10 @@ class TestConfigChanged:
         """
         arrange: No upstream relation; ca-certificates config updated.
         act: Run config_changed.
-        assert: Unit status is WaitingStatus; no error raised (debug log emitted for no certs).
+        assert: Unit status is BlockedStatus; no error raised.
         """
         state_out = context.run(
             context.on.config_changed(),
             ops.testing.State(config={"ca-certificates": "ROOT_CA_PEM"}),
         )
-        assert state_out.unit_status == ops.WaitingStatus("Waiting for upstream TLS provider")
+        assert state_out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")

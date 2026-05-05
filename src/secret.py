@@ -112,7 +112,17 @@ def revoke_csr_mapping(charm: ops.CharmBase, csr_pem: str) -> None:
         charm (ops.CharmBase): The charm instance used to access the model.
         csr_pem (str): PEM-encoded CSR whose fingerprint identifies the secret to remove.
     """
-    label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
+    revoke_csr_mapping_by_fingerprint(charm, csr_sha256_hex(csr_pem))
+
+
+def revoke_csr_mapping_by_fingerprint(charm: ops.CharmBase, fingerprint: str) -> None:
+    """Remove a CSR mapping secret by its SHA-256 hex fingerprint.  No-op if absent.
+
+    Args:
+        charm (ops.CharmBase): The charm instance used to access the model.
+        fingerprint (str): Lowercase hex SHA-256 fingerprint of the CSR.
+    """
+    label = f"{JUJU_SECRET_LABEL_PREFIX}{fingerprint}"
     try:
         secret = charm.model.get_secret(label=label)
         secret.remove_all_revisions()
