@@ -54,7 +54,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         """Construct.
 
         Args:
-            args: Arguments passed to the CharmBase parent constructor.
+            args (typing.Any): Arguments passed to the CharmBase parent constructor.
         """
         super().__init__(*args)
 
@@ -192,9 +192,9 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         config (e.g. a root CA missing from the upstream provider's chain) if set.
 
         Args:
-            ca: PEM-encoded CA certificate from the upstream provider.
-            chain: List of Certificate objects from the upstream provider.
-            leaf_pem: PEM string of the leaf certificate to exclude from the chain.
+            ca (str): PEM-encoded CA certificate from the upstream provider.
+            chain (list): List of Certificate objects from the upstream provider.
+            leaf_pem (str): PEM string of the leaf certificate to exclude from the chain.
 
         Returns:
             PEM bundle containing all CA certs needed to verify the leaf cert.

@@ -54,10 +54,10 @@ class NewTLSCertificatesRelation:
         """Initialise the upstream relation handler.
 
         Args:
-            charm: The charm instance.
-            certificate_requests: The current set of certificate requests from
+            charm (ops.CharmBase): The charm instance.
+            certificate_requests (list[CertificateRequest]): The current set of certificate requests from
                 the old-interface handler, used to seed the upstream library.
-            private_key_pem: PEM-encoded private key for the upstream CSR.
+            private_key_pem (str): PEM-encoded private key for the upstream CSR.
         """
         self._charm = charm
         cert_request_attrs = []
@@ -91,7 +91,7 @@ class NewTLSCertificatesRelation:
         """Return all provider certificates currently assigned by the upstream provider.
 
         Returns:
-            A list of ProviderCertificate objects from the upstream (v4) relation.
+            list[ProviderCertificate]: A list of ProviderCertificate objects from the upstream (v4) relation.
         """
         return self._tls.get_provider_certificates()
 
@@ -104,8 +104,8 @@ class NewTLSCertificatesRelation:
         SHA-256 hex fingerprint of the corresponding CSR.
 
         Returns:
-            A dict mapping CSR fingerprint to IssuedCertificate for each
-            certificate currently assigned by the upstream provider.
+            dict[str, IssuedCertificate]: A dict mapping CSR fingerprint to IssuedCertificate for each
+                certificate currently assigned by the upstream provider.
         """
         issued: dict[str, IssuedCertificate] = {}
         for pc in self._tls.get_provider_certificates():
@@ -121,6 +121,6 @@ class NewTLSCertificatesRelation:
         """Request renewal of an existing certificate from the upstream (v4) provider.
 
         Args:
-            certificate: The ProviderCertificate to renew.
+            certificate (ProviderCertificate): The ProviderCertificate to renew.
         """
         self._tls.renew_certificate(certificate)

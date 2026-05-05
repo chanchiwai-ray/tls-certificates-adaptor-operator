@@ -52,7 +52,7 @@ class OldTLSCertificatesRelation:
         """Initialise the relation handler.
 
         Args:
-            charm: The charm instance.  The handler reads the active
+            charm (ops.CharmBase): The charm instance.  The handler reads the active
                 old-interface relations from ``charm.model.relations`` each
                 time a method is called so it always reflects current state.
         """
@@ -78,9 +78,9 @@ class OldTLSCertificatesRelation:
         such as ovn-central use for mutual TLS between their OVSDB components.
 
         Returns:
-            A list of :class:`~models.CertificateRequest` objects for all
-            server certificate requests found across every active relation,
-            plus one synthetic client cert request per active relation.
+            list[CertificateRequest]: A list of CertificateRequest objects for all
+                server certificate requests found across every active relation,
+                plus one synthetic client cert request per active relation.
         """
         requests: list[CertificateRequest] = []
         for relation in self._charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
@@ -116,8 +116,14 @@ class OldTLSCertificatesRelation:
     ) -> CertificateRequest | None:
         """Parse a legacy single-cert request from a unit databag.
 
-        Returns a :class:`~models.CertificateRequest` with ``is_legacy=True``
-        if a ``common_name`` key is present, or ``None`` if not.
+        Args:
+            data (ops.RelationDataContent): The unit databag to parse.
+            unit_name (str): The unit name for logging purposes.
+            relation_id (int): The relation ID for the request.
+
+        Returns:
+            CertificateRequest | None: A CertificateRequest with ``is_legacy=True``
+                if a ``common_name`` key is present, or ``None`` if not.
         """
         cn = data.get("common_name", "").strip()
         if not cn:
@@ -151,8 +157,14 @@ class OldTLSCertificatesRelation:
     ) -> list[CertificateRequest]:
         """Parse batch-format cert requests (``cert_requests`` JSON dict) from a unit databag.
 
-        Returns one :class:`~models.CertificateRequest` with ``is_legacy=False``
-        per CN in the dict.  Returns an empty list if the key is absent or malformed.
+        Args:
+            data (ops.RelationDataContent): The unit databag to parse.
+            unit_name (str): The unit name for logging purposes.
+            relation_id (int): The relation ID for the request.
+
+        Returns:
+            list[CertificateRequest]: One CertificateRequest with ``is_legacy=False``
+                per CN in the dict.  Returns an empty list if the key is absent or malformed.
         """
         raw = data.get(CERT_REQUEST_KEY, "")
         if not raw:
@@ -221,13 +233,13 @@ class OldTLSCertificatesRelation:
         ``ca``.
 
         Args:
-            relation_id: ID of the old-interface relation to write to.
-            requirer_unit_name: The old requirer unit name (e.g. ``keystone/0``).
-            common_name: The common name of the certificate.
-            cert: PEM-encoded signed certificate.
-            key: PEM-encoded private key.
-            ca: PEM-encoded CA certificate.
-            is_legacy: When True use the legacy single-cert key format; when
+            relation_id (int): ID of the old-interface relation to write to.
+            requirer_unit_name (str): The old requirer unit name (e.g. ``keystone/0``).
+            common_name (str): The common name of the certificate.
+            cert (str): PEM-encoded signed certificate.
+            key (str): PEM-encoded private key.
+            ca (str): PEM-encoded CA certificate.
+            is_legacy (bool): When True use the legacy single-cert key format; when
                 False use the batch ``processed_requests`` dict format.
         """
         relation = self._charm.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
@@ -274,9 +286,9 @@ class OldTLSCertificatesRelation:
         (ovn-northd ↔ ovsdb-server connections).
 
         Args:
-            relation_id: ID of the old-interface relation to write to.
-            cert: PEM-encoded signed client certificate.
-            key: PEM-encoded private key for the client certificate.
+            relation_id (int): ID of the old-interface relation to write to.
+            cert (str): PEM-encoded signed client certificate.
+            key (str): PEM-encoded private key for the client certificate.
         """
         relation = self._charm.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
         if relation is None:
@@ -299,7 +311,7 @@ class OldTLSCertificatesRelation:
         protocol — so all CA certs must be bundled into this single field.
 
         Args:
-            ca: PEM-encoded CA certificate bundle (may be concatenated certs).
+            ca (str): PEM-encoded CA certificate bundle (may be concatenated certs).
         """
         for relation in self._charm.model.relations[OLD_INTERFACE_RELATION_NAME]:
             relation.data[self._charm.unit]["ca"] = ca

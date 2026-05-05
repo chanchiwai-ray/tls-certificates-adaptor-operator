@@ -39,10 +39,10 @@ class CharmState(BaseModel):
         (dependency injection).
 
         Args:
-            old_handler: Handler for all active old-interface (v1) relations.
+            old_handler (OldTLSCertificatesRelation): Handler for all active old-interface (v1) relations.
                 Reads cert requests from all remote-unit databags across every
                 active relation.
-            upstream: Handler for the modern upstream tls-certificates (v4)
+            upstream (NewTLSCertificatesRelation): Handler for the modern upstream tls-certificates (v4)
                 relation.  Provides currently-issued certificates.
 
         Returns:

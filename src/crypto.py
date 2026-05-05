@@ -30,12 +30,12 @@ def classify_sans(sans: list[str]) -> tuple[list[str], list[str]]:
     PKI role validation.
 
     Args:
-        sans: A list of SAN strings that may be DNS names or IP addresses
+        sans (list[str]): A list of SAN strings that may be DNS names or IP addresses
             (IPv4 or IPv6).
 
     Returns:
-        A ``(dns_sans, ip_sans)`` tuple where each element is a list of the
-        corresponding type.
+        tuple[list[str], list[str]]: A ``(dns_sans, ip_sans)`` tuple where each element is a list of the
+            corresponding type.
     """
     dns_sans: list[str] = []
     ip_sans: list[str] = []
