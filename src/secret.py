@@ -7,7 +7,12 @@ import logging
 
 import ops
 
-from constants import CHARM_PRIVATE_KEY_SECRET_LABEL, JUJU_SECRET_LABEL_PREFIX
+from constants import (
+    CHARM_PRIVATE_KEY_SECRET_LABEL,
+    JUJU_SECRET_IS_CLIENT_KEY,
+    JUJU_SECRET_IS_LEGACY_KEY,
+    JUJU_SECRET_LABEL_PREFIX,
+)
 from crypto import csr_sha256_hex, generate_private_key
 
 logger = logging.getLogger(__name__)
@@ -45,6 +50,8 @@ def store_csr_mapping(
     private_key_pem: str,
     requirer_unit: str,
     relation_id: int,
+    is_legacy: bool = False,
+    is_client: bool = False,
 ) -> None:
     """Create a unit-owned Juju Secret mapping a CSR fingerprint to its requirer.
 
@@ -58,6 +65,13 @@ def store_csr_mapping(
         private_key_pem (str): PEM-encoded private key to store in the secret.
         requirer_unit (str): The old-interface requirer unit name (e.g. ``keystone/0``).
         relation_id (int): The old-interface relation ID.
+        is_legacy (bool): When True the request used the legacy single-cert
+            format; when False it used the batch format.  Stored so that
+            ``_on_certificate_available`` can pass the correct flag to
+            ``write_certificate()``.
+        is_client (bool): When True this is a synthetic client cert request
+            (written to ``client.cert``/``client.key``) rather than a per-unit
+            server cert.
     """
     label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
     charm.unit.add_secret(
@@ -65,6 +79,8 @@ def store_csr_mapping(
             "private-key": private_key_pem,
             "requirer-unit": requirer_unit,
             "relation-id": str(relation_id),
+            JUJU_SECRET_IS_LEGACY_KEY: "true" if is_legacy else "false",
+            JUJU_SECRET_IS_CLIENT_KEY: "true" if is_client else "false",
         },
         label=label,
     )

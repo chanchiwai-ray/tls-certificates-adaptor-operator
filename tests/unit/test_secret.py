@@ -7,7 +7,12 @@ from unittest.mock import MagicMock
 
 import ops
 
-from constants import CHARM_PRIVATE_KEY_SECRET_LABEL, JUJU_SECRET_LABEL_PREFIX
+from constants import (
+    CHARM_PRIVATE_KEY_SECRET_LABEL,
+    JUJU_SECRET_IS_CLIENT_KEY,
+    JUJU_SECRET_IS_LEGACY_KEY,
+    JUJU_SECRET_LABEL_PREFIX,
+)
 from crypto import build_csr, csr_sha256_hex, generate_private_key
 from secret import (
     get_csr_mapping,
@@ -78,6 +83,8 @@ class TestStoreCsrMapping:
                 "private-key": _TEST_KEY_PEM,
                 "requirer-unit": "keystone/0",
                 "relation-id": "5",
+                JUJU_SECRET_IS_LEGACY_KEY: "false",
+                JUJU_SECRET_IS_CLIENT_KEY: "false",
             },
             label=_MAPPING_LABEL,
         )

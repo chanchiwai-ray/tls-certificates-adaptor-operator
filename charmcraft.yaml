@@ -40,3 +40,17 @@ requires:
   certificates-upstream:
     interface: tls-certificates
     limit: 1
+
+config:
+  options:
+    ca-certificates:
+      type: string
+      default: ""
+      description: |
+        PEM-encoded CA certificate bundle to append to the CA chain delivered to
+        old-interface (v1) requirers.  Use this when the upstream TLS provider
+        does not include the full chain up to the root CA in its relation data
+        (e.g. when vault uses an intermediate CA issued by self-signed-certificates-operator).
+        Paste one or more concatenated PEM blocks here.  The bundle is appended
+        after event.ca and event.chain when writing the ``ca`` key to the legacy
+        relation databag.

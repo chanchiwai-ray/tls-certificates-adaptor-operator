@@ -4,6 +4,7 @@
 """Crypto helpers: RSA key generation, CSR building, and fingerprinting."""
 
 import hashlib
+import ipaddress
 
 from charmlibs.interfaces.tls_certificates import CertificateRequestAttributes, PrivateKey
 from cryptography import x509
@@ -19,8 +20,41 @@ def generate_private_key() -> str:
     return str(PrivateKey.generate(key_size=2048))
 
 
+def classify_sans(sans: list[str]) -> tuple[list[str], list[str]]:
+    """Classify a mixed list of SANs into DNS names and IP addresses.
+
+    The reactive tls-certificates (v1) interface does not distinguish between
+    DNS and IP SANs — requirers put both types in the same list.  This helper
+    separates them so that IP addresses are placed in the correct X.509 IP SAN
+    extension (rather than the DNS SAN extension), which is required for vault
+    PKI role validation.
+
+    Args:
+        sans: A list of SAN strings that may be DNS names or IP addresses
+            (IPv4 or IPv6).
+
+    Returns:
+        A ``(dns_sans, ip_sans)`` tuple where each element is a list of the
+        corresponding type.
+    """
+    dns_sans: list[str] = []
+    ip_sans: list[str] = []
+    for san in sans:
+        try:
+            ipaddress.ip_address(san)
+            ip_sans.append(san)
+        except ValueError:
+            dns_sans.append(san)
+    return dns_sans, ip_sans
+
+
 def build_csr(private_key_pem: str, common_name: str, sans: list[str]) -> str:
     """Build a deterministic PEM-encoded CSR for the given key, CN, and SANs.
+
+    SANs that are IP addresses are placed in the IP SAN extension; all others
+    are placed in the DNS SAN extension.  This ensures the CSR fingerprint
+    matches the one produced by the upstream ``TLSCertificatesRequiresV4``
+    library (which uses the same ``CertificateRequestAttributes`` parameters).
 
     Uses ``add_unique_id_to_subject_name=False`` so that the same
     ``(private_key_pem, common_name, sans)`` triple always produces an
@@ -30,15 +64,18 @@ def build_csr(private_key_pem: str, common_name: str, sans: list[str]) -> str:
     Args:
         private_key_pem (str): PEM-encoded RSA private key.
         common_name (str): The certificate common name.
-        sans (list[str]): DNS Subject Alternative Names.
+        sans (list[str]): Subject Alternative Names (DNS names and/or IP
+            addresses).
 
     Returns:
         str: PEM-encoded CSR.
     """
     pk = PrivateKey.from_string(private_key_pem)
+    dns_sans, ip_sans = classify_sans(sans)
     attrs = CertificateRequestAttributes(
         common_name=common_name,
-        sans_dns=sans if sans else None,
+        sans_dns=dns_sans if dns_sans else None,
+        sans_ip=ip_sans if ip_sans else None,
         add_unique_id_to_subject_name=False,
     )
     csr = attrs.generate_csr(pk)

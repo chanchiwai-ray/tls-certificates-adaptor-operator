@@ -21,6 +21,7 @@ from charm import TLSCertificateAdaptorCharm
 from constants import (
     CHARM_PRIVATE_KEY_SECRET_LABEL,
     CSR_FINGERPRINTS_KEY,
+    JUJU_SECRET_IS_LEGACY_KEY,
     JUJU_SECRET_LABEL_PREFIX,
     OLD_INTERFACE_RELATION_NAME,
     UPSTREAM_RELATION_NAME,
@@ -53,13 +54,19 @@ def key_secret() -> ops.testing.Secret:
 
 
 def _cert_req(common_name: str, sans: list[str]) -> str:
-    """Return a JSON cert_requests string for the old reactive interface."""
-    return json.dumps([{"cert_type": "server", "common_name": common_name, "sans": sans}])
+    """Return a JSON cert_requests string for the old reactive interface (batch dict format)."""
+    return json.dumps({common_name: {"sans": sans}})
 
 
 def _mapping_label(common_name: str, sans: list[str]) -> str:
     """Compute the expected secret label for a CSR mapping."""
     csr_pem = build_csr(_TEST_KEY_PEM, common_name, sans)
+    return f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
+
+
+def _client_mapping_label(app_name: str) -> str:
+    """Compute the expected secret label for a synthetic client cert mapping."""
+    csr_pem = build_csr(_TEST_KEY_PEM, f"{app_name}-client", [])
     return f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
 
 
@@ -174,6 +181,7 @@ class TestCertificatesRelationChangedCsrMapping:
         assert content["requirer-unit"] == "keystone/0"
         assert content["relation-id"] == str(relation.id)
         assert content["private-key"] == _TEST_KEY_PEM
+        assert content[JUJU_SECRET_IS_LEGACY_KEY] == "false"
 
     def test_repeated_event_for_same_request_is_idempotent(
         self, context: ops.testing.Context, key_secret: ops.testing.Secret
@@ -193,6 +201,16 @@ class TestCertificatesRelationChangedCsrMapping:
                 "relation-id": "5",
             },
         )
+        client_csr_pem = build_csr(_TEST_KEY_PEM, "keystone-client", [])
+        existing_client_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(client_csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/client",
+                "relation-id": "5",
+            },
+        )
         relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
             remote_app_name="keystone",
@@ -200,7 +218,9 @@ class TestCertificatesRelationChangedCsrMapping:
                 0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
             },
         )
-        state = ops.testing.State(relations={relation}, secrets={key_secret, existing_mapping})
+        state = ops.testing.State(
+            relations={relation}, secrets={key_secret, existing_mapping, existing_client_mapping}
+        )
 
         out = context.run(context.on.relation_changed(relation=relation), state)
 
@@ -232,6 +252,103 @@ class TestCertificatesRelationChangedCsrMapping:
         }
         created = {s.label for s in out.secrets if s.label in expected_labels}
         assert created == expected_labels
+
+
+class TestUpgradeCharm:
+    """Tests for _on_upgrade_charm — re-processing existing relations after juju refresh."""
+
+    def test_upgrade_charm_creates_mapping_secrets_for_existing_relations(
+        self, context: ops.testing.Context, key_secret: ops.testing.Secret
+    ):
+        """
+        arrange: Two old-interface relations (keystone, cinder) already exist; no mapping secrets.
+        act: Fire upgrade_charm.
+        assert: A CSR mapping secret is created for each relation's pending request.
+        """
+        keystone_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            remote_units_data={
+                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
+            },
+        )
+        cinder_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="cinder",
+            remote_units_data={0: {"cert_requests": _cert_req("cinder.internal", ["10.0.0.1"])}},
+        )
+        state_in = ops.testing.State(
+            relations={keystone_relation, cinder_relation},
+            secrets={key_secret},
+        )
+
+        out = context.run(context.on.upgrade_charm(), state_in)
+
+        expected_labels = {
+            _mapping_label("keystone.internal", ["keystone.internal"]),
+            _mapping_label("cinder.internal", ["10.0.0.1"]),
+        }
+        created = {s.label for s in out.secrets if s.label in expected_labels}
+        assert created == expected_labels
+
+    def test_upgrade_charm_is_idempotent_when_mappings_already_exist(
+        self, context: ops.testing.Context, key_secret: ops.testing.Secret
+    ):
+        """
+        arrange: One old-interface relation whose CSR mapping secret already exists.
+        act: Fire upgrade_charm.
+        assert: No new mapping secret is created (idempotent).
+        """
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        existing_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/0",
+                "relation-id": "5",
+            },
+        )
+        client_csr_pem = build_csr(_TEST_KEY_PEM, "keystone-client", [])
+        existing_client_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(client_csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/client",
+                "relation-id": "5",
+            },
+        )
+        relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            remote_units_data={
+                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
+            },
+        )
+        state_in = ops.testing.State(
+            relations={relation},
+            secrets={key_secret, existing_mapping, existing_client_mapping},
+        )
+
+        out = context.run(context.on.upgrade_charm(), state_in)
+
+        assert len(out.secrets) == len(state_in.secrets)
+
+    def test_upgrade_charm_sets_active_status_when_upstream_exists(
+        self, context: ops.testing.Context
+    ):
+        """
+        arrange: Upstream TLS provider relation is active; no old-interface relations.
+        act: Fire upgrade_charm.
+        assert: Unit status is ActiveStatus.
+        """
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        state_in = ops.testing.State(relations={upstream_relation})
+
+        out = context.run(context.on.upgrade_charm(), state_in)
+
+        assert out.unit_status == ops.ActiveStatus()
 
 
 class TestCertificatesUpstreamRelationJoined:
@@ -306,6 +423,7 @@ class TestCertificateAvailableDelivery:
         csr_pem: str,
         old_relation_id: int,
         requirer_unit_name: str = "keystone/0",
+        is_legacy: bool = False,
     ) -> ops.testing.Secret:
         """Build a pre-populated CSR mapping secret for the given CSR."""
         label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
@@ -316,10 +434,11 @@ class TestCertificateAvailableDelivery:
                 "private-key": _TEST_KEY_PEM,
                 "requirer-unit": requirer_unit_name,
                 "relation-id": str(old_relation_id),
+                JUJU_SECRET_IS_LEGACY_KEY: "true" if is_legacy else "false",
             },
         )
 
-    def test_happy_path_delivers_cert_and_revokes_mapping(
+    def test_happy_path_delivers_cert_and_ca_batch_format(
         self,
         context: ops.testing.Context,
         key_secret: ops.testing.Secret,
@@ -327,9 +446,9 @@ class TestCertificateAvailableDelivery:
         ca_private_key: PrivateKey,
     ):
         """
-        arrange: Old-interface relation, upstream relation, and a CSR mapping secret.
+        arrange: Old-interface relation, upstream relation, and a CSR mapping secret (batch format).
         act: Fire certificate_available with a signed cert.
-        assert: Old-interface unit databag contains cert + key; mapping secret is revoked.
+        assert: {munged}.processed_requests dict contains cert/key; ca is top-level.
         """
         old_relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
@@ -337,7 +456,7 @@ class TestCertificateAvailableDelivery:
         )
         upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
         csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
-        mapping_secret = self._build_mapping_secret(csr_pem, old_relation.id)
+        mapping_secret = self._build_mapping_secret(csr_pem, old_relation.id, is_legacy=False)
         cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
 
         state_in = ops.testing.State(
@@ -359,11 +478,10 @@ class TestCertificateAvailableDelivery:
         out_old_relation = out.get_relation(old_relation.id)
         assert out_old_relation is not None
         payload = json.loads(out_old_relation.local_unit_data["keystone_0.processed_requests"])
-        assert payload[0]["cert"] == str(cert)
-        assert payload[0]["key"] == _TEST_KEY_PEM
-        assert payload[0]["ca"] == str(ca_certificate)
-        assert payload[0]["common_name"] == "keystone.internal"
-        assert payload[0]["cert_type"] == "server"
+        assert isinstance(payload, dict)
+        assert payload["keystone.internal"]["cert"] == str(cert)
+        assert payload["keystone.internal"]["key"] == _TEST_KEY_PEM
+        assert out_old_relation.local_unit_data["ca"] == str(ca_certificate)
 
     def test_mapping_secret_persists_after_delivery(
         self,
@@ -404,6 +522,156 @@ class TestCertificateAvailableDelivery:
 
         mapping_labels = {s.label for s in out.secrets if s.label == mapping_secret.label}
         assert mapping_labels == {mapping_secret.label}
+
+    def test_ca_propagated_to_all_old_interface_relations(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: Two old-interface relations (keystone and cinder); cert available for keystone.
+        act: Fire certificate_available for keystone's CSR.
+        assert: ca key is written to BOTH old-interface relation databags.
+        """
+        keystone_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        cinder_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="cinder",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(csr_pem, keystone_relation.id, is_legacy=False)
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+
+        state_in = ops.testing.State(
+            relations={keystone_relation, cinder_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        for rel_id in (keystone_relation.id, cinder_relation.id):
+            out_rel = out.get_relation(rel_id)
+            assert out_rel is not None, f"relation {rel_id} missing from output state"
+            assert out_rel.local_unit_data.get("ca") == str(ca_certificate)
+
+    def test_leaf_cert_excluded_from_ca_written_to_other_relations(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: Two old-interface relations (keystone, cinder); event.chain includes the leaf.
+        act: Fire certificate_available for keystone's CSR with chain=[leaf, ca].
+        assert: Cinder's 'ca' contains the CA cert; the keystone leaf cert is absent from it;
+                no 'chain' key is written to cinder's databag (v1 interface has no chain field).
+        """
+        keystone_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        cinder_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="cinder",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        mapping_secret = self._build_mapping_secret(csr_pem, keystone_relation.id, is_legacy=False)
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+
+        state_in = ops.testing.State(
+            relations={keystone_relation, cinder_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                # Simulate providers that include the leaf in the chain list.
+                chain=[cert, ca_certificate],
+            ),
+            state_in,
+        )
+
+        cinder_rel = out.get_relation(cinder_relation.id)
+        assert cinder_rel is not None
+        cinder_ca = cinder_rel.local_unit_data.get("ca", "")
+        assert str(cert) not in cinder_ca, "leaf cert must not appear in ca bundle"
+        assert str(ca_certificate) in cinder_ca
+        assert "chain" not in cinder_rel.local_unit_data, "v1 interface must not have chain key"
+
+    def test_client_cert_written_to_client_cert_and_key_keys(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: A client cert mapping secret (is_client=True) in state.
+        act: Fire certificate_available for the client CSR.
+        assert: client.cert and client.key are written to the relation; server cert keys absent.
+        """
+        from constants import CLIENT_CERT_KEY, CLIENT_KEY_KEY, JUJU_SECRET_IS_CLIENT_KEY
+
+        ovn_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="ovn-central",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        client_csr_pem = build_csr(_TEST_KEY_PEM, "ovn-central-client", [])
+        client_cert = sign_csr(client_csr_pem, ca_certificate, ca_private_key)
+        client_mapping = ops.testing.Secret(
+            label=f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(client_csr_pem)}",
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "ovn-central/client",
+                "relation-id": str(ovn_relation.id),
+                JUJU_SECRET_IS_CLIENT_KEY: "true",
+            },
+        )
+        state_in = ops.testing.State(
+            relations={ovn_relation, upstream_relation},
+            secrets={key_secret, client_mapping},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=client_cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(client_csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(ovn_relation.id)
+        assert out_rel is not None
+        assert out_rel.local_unit_data.get(CLIENT_CERT_KEY) == str(client_cert)
+        assert out_rel.local_unit_data.get(CLIENT_KEY_KEY) == _TEST_KEY_PEM
+        # Must NOT write per-unit server cert keys
+        assert not any(k.endswith(".server.cert") for k in out_rel.local_unit_data)
 
     def test_missing_mapping_secret_logs_error_and_skips(
         self,
@@ -708,3 +976,175 @@ class TestCertificatesRelationBroken:
         out = context.run(context.on.relation_broken(old_relation), state_in)
 
         assert len(out.secrets) == len(state_in.secrets)
+
+
+class TestBuildFullCaPem:
+    """Tests for TLSCertificateAdaptorCharm._build_full_ca_pem()."""
+
+    def _make_mapping_secret(
+        self,
+        csr_pem: str,
+        old_relation_id: int,
+        is_legacy: bool = False,
+    ) -> ops.testing.Secret:
+        label = f"{JUJU_SECRET_LABEL_PREFIX}{csr_sha256_hex(csr_pem)}"
+        return ops.testing.Secret(
+            label=label,
+            owner="unit",
+            tracked_content={
+                "private-key": _TEST_KEY_PEM,
+                "requirer-unit": "keystone/0",
+                "relation-id": str(old_relation_id),
+                JUJU_SECRET_IS_LEGACY_KEY: "true" if is_legacy else "false",
+            },
+        )
+
+    def test_intermediate_ca_appended_to_root_ca(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        intermediate_ca_certificate: Certificate,
+        intermediate_ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: event.ca is the root CA; event.chain contains leaf + intermediate (distinct).
+        act: Fire certificate_available.
+        assert: 'ca' bundle contains BOTH root and intermediate CA (append branch exercised).
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        leaf_cert = sign_csr(csr_pem, intermediate_ca_certificate, intermediate_ca_private_key)
+        mapping_secret = self._make_mapping_secret(csr_pem, old_relation.id)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=leaf_cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[leaf_cert, intermediate_ca_certificate],
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(old_relation.id)
+        assert out_rel is not None
+        ca_bundle = out_rel.local_unit_data.get("ca", "")
+        assert str(ca_certificate) in ca_bundle, "root CA must be in bundle"
+        assert str(intermediate_ca_certificate) in ca_bundle, "intermediate CA must be appended"
+        assert str(leaf_cert) not in ca_bundle, "leaf must not appear in ca bundle"
+
+    def test_duplicate_ca_not_appended_twice(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: event.ca and event.chain both contain the same CA cert (dedup short-circuit).
+        act: Fire certificate_available.
+        assert: The CA cert appears exactly once in the written 'ca' bundle.
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+        mapping_secret = self._make_mapping_secret(csr_pem, old_relation.id)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],  # same CA in both ca and chain → dedup
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(old_relation.id)
+        assert out_rel is not None
+        ca_bundle = out_rel.local_unit_data.get("ca", "")
+        assert ca_bundle.count("BEGIN CERTIFICATE") == 1, "CA must appear exactly once"
+
+    def test_extra_ca_from_config_appended(
+        self,
+        context: ops.testing.Context,
+        key_secret: ops.testing.Secret,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+        intermediate_ca_certificate: Certificate,
+    ):
+        """
+        arrange: ca-certificates config contains a root CA PEM not in event.chain.
+        act: Fire certificate_available.
+        assert: Both event.ca and the config CA appear in the written 'ca' bundle.
+        """
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+        )
+        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
+        csr_pem = build_csr(_TEST_KEY_PEM, "keystone.internal", ["keystone.internal"])
+        cert = sign_csr(csr_pem, ca_certificate, ca_private_key)
+        mapping_secret = self._make_mapping_secret(csr_pem, old_relation.id)
+
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={key_secret, mapping_secret},
+            config={"ca-certificates": str(intermediate_ca_certificate)},
+        )
+
+        out = context.run(
+            context.on.custom(
+                _CERT_AVAILABLE_EVENT,
+                certificate=cert,
+                certificate_signing_request=CertificateSigningRequest.from_string(csr_pem),
+                ca=ca_certificate,
+                chain=[ca_certificate],
+            ),
+            state_in,
+        )
+
+        out_rel = out.get_relation(old_relation.id)
+        assert out_rel is not None
+        ca_bundle = out_rel.local_unit_data.get("ca", "")
+        assert str(ca_certificate) in ca_bundle
+        assert str(intermediate_ca_certificate) in ca_bundle
+
+
+class TestConfigChanged:
+    """Tests for _on_config_changed."""
+
+    def test_config_changed_without_upstream_sets_waiting_status(
+        self, context: ops.testing.Context
+    ):
+        """
+        arrange: No upstream relation; ca-certificates config updated.
+        act: Run config_changed.
+        assert: Unit status is WaitingStatus; no error raised (debug log emitted for no certs).
+        """
+        state_out = context.run(
+            context.on.config_changed(),
+            ops.testing.State(config={"ca-certificates": "ROOT_CA_PEM"}),
+        )
+        assert state_out.unit_status == ops.WaitingStatus("Waiting for upstream TLS provider")

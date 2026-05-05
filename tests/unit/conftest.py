@@ -27,6 +27,21 @@ def ca_certificate(ca_private_key: PrivateKey) -> Certificate:
     return Certificate.generate_self_signed_ca(attrs, ca_private_key, validity=timedelta(days=365))
 
 
+@pytest.fixture(scope="session")
+def intermediate_ca_private_key() -> PrivateKey:
+    """Return a session-scoped private key for the intermediate CA."""
+    return PrivateKey.generate(key_size=2048)
+
+
+@pytest.fixture(scope="session")
+def intermediate_ca_certificate(intermediate_ca_private_key: PrivateKey) -> Certificate:
+    """Return a session-scoped self-signed intermediate CA certificate (distinct from root CA)."""
+    attrs = CertificateRequestAttributes(common_name="Test Intermediate CA")
+    return Certificate.generate_self_signed_ca(
+        attrs, intermediate_ca_private_key, validity=timedelta(days=365)
+    )
+
+
 def sign_csr(csr_pem: str, ca: Certificate, ca_key: PrivateKey) -> Certificate:
     """Sign a PEM CSR with the given CA and return the issued Certificate.
 

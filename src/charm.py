@@ -20,6 +20,8 @@ from charmlibs.interfaces.tls_certificates import (
 
 from constants import (
     CSR_FINGERPRINTS_KEY,
+    JUJU_SECRET_IS_CLIENT_KEY,
+    JUJU_SECRET_IS_LEGACY_KEY,
     JUJU_SECRET_LABEL_PREFIX,
     OLD_INTERFACE_RELATION_NAME,
     UPSTREAM_RELATION_NAME,
@@ -68,7 +70,8 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         self.tls_certificates = self._upstream_handler.tls_certificates
 
         self.framework.observe(self.on.install, self.reconcile)
-        self.framework.observe(self.on.config_changed, self.reconcile)
+        self.framework.observe(self.on.config_changed, self._on_config_changed)
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(
             self.on[OLD_INTERFACE_RELATION_NAME].relation_changed,
             self._on_certificates_relation_changed,
@@ -108,26 +111,22 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             return
         self.unit.status = ops.ActiveStatus()
 
-    def _on_certificates_relation_changed(self, event: ops.RelationChangedEvent) -> None:
-        """Store a CSR mapping secret for each new old-interface certificate request.
+    def _process_old_interface_relation(self, relation: ops.Relation) -> None:
+        """Store CSR mapping secrets for all pending requests on a single relation.
 
-        For each CertificateRequest that does not yet have a mapping secret,
-        builds a deterministic CSR from the charm's stable private key and
-        the request attributes, then persists a mapping secret keyed by the
-        CSR fingerprint.  The upstream TLS library picks up the updated CSR
-        list automatically via the ``refresh_events`` hook registered in
-        ``__init__``.  Already-mapped requests are skipped (idempotent).
-
-        Also writes the accumulated CSR fingerprints for this relation into the
-        local unit relation databag so that ``_on_certificates_relation_broken``
-        can revoke them without needing remote unit data.
+        For each CertificateRequest on *relation* that does not yet have a
+        mapping secret, builds a deterministic CSR and persists a mapping
+        secret keyed by the CSR fingerprint.  Already-mapped requests are
+        skipped (idempotent).  Also writes the accumulated fingerprints into
+        the local unit relation databag for use by
+        ``_on_certificates_relation_broken``.
         """
         state = self.state
         fingerprints = []
         for cr in state.certificate_requests if state else []:
-            if cr.relation_id != event.relation.id:
+            if cr.relation_id != relation.id:
                 continue
-            csr_pem = build_csr(self._charm_key_pem, cr.common_name, cr.sans_dns)
+            csr_pem = build_csr(self._charm_key_pem, cr.common_name, cr.sans)
             fingerprints.append(csr_sha256_hex(csr_pem))
             if get_csr_mapping(self, csr_pem) is not None:
                 logger.debug(
@@ -142,6 +141,8 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 self._charm_key_pem,
                 cr.requirer_unit_name,
                 cr.relation_id,
+                is_legacy=cr.is_legacy,
+                is_client=cr.is_client,
             )
             logger.info(
                 "Stored CSR mapping for %s (%s) on relation %d",
@@ -150,7 +151,93 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
                 cr.relation_id,
             )
         if fingerprints:
-            event.relation.data[self.unit][CSR_FINGERPRINTS_KEY] = json.dumps(fingerprints)
+            relation.data[self.unit][CSR_FINGERPRINTS_KEY] = json.dumps(fingerprints)
+
+    def _on_certificates_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Store a CSR mapping secret for each new old-interface certificate request.
+
+        For each CertificateRequest that does not yet have a mapping secret,
+        builds a deterministic CSR from the charm's stable private key and
+        the request attributes, then persists a mapping secret keyed by the
+        CSR fingerprint.  The upstream TLS library picks up the updated CSR
+        list automatically via the ``refresh_events`` hook registered in
+        ``__init__``.  Already-mapped requests are skipped (idempotent).
+
+        Also writes the accumulated CSR fingerprints for this relation into the
+        local unit relation databag so that ``_on_certificates_relation_broken``
+        can revoke them without needing remote unit data.
+        """
+        self._process_old_interface_relation(event.relation)
+        self.reconcile(event)
+
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Re-process all active old-interface relations after a charm refresh.
+
+        ``juju refresh`` does not re-emit ``relation_changed`` events, so any
+        fix applied to the relation handler would only take effect for new
+        units.  This handler bridges that gap by re-running
+        ``_process_old_interface_relation`` for every currently active
+        old-interface relation, ensuring the updated charm code is applied to
+        all existing requesters immediately after upgrade.
+        """
+        for relation in self.model.relations[OLD_INTERFACE_RELATION_NAME]:
+            self._process_old_interface_relation(relation)
+        self.reconcile(event)
+
+    def _build_full_ca_pem(self, ca: str, chain: list, leaf_pem: str) -> str:
+        """Build a full CA certificate bundle from the upstream provider data and config.
+
+        Strips the leaf cert from *chain*, then appends any CA certs not already
+        present in *ca*.  Finally appends the operator-supplied ``ca-certificates``
+        config (e.g. a root CA missing from the upstream provider's chain) if set.
+
+        Args:
+            ca: PEM-encoded CA certificate from the upstream provider.
+            chain: List of Certificate objects from the upstream provider.
+            leaf_pem: PEM string of the leaf certificate to exclude from the chain.
+
+        Returns:
+            PEM bundle containing all CA certs needed to verify the leaf cert.
+        """
+        # Build the full CA chain (all CA certs from immediate issuer to root) by
+        # stripping the leaf cert from chain.  The old reactive tls-certificates (v1)
+        # interface only reads the "ca" key and ignores "chain", so we concatenate all
+        # CA certs into a single PEM bundle.
+        ca_certs = [str(c) for c in chain if str(c) != leaf_pem] if chain else []
+        full_ca_pem = ca
+        for cert_pem in ca_certs:
+            stripped = cert_pem.strip()
+            if stripped not in full_ca_pem:
+                full_ca_pem = full_ca_pem + "\n" + stripped
+        # Append any operator-supplied extra CA certs (e.g. the root CA when the upstream
+        # provider only delivers an intermediate CA and does not include the root in chain).
+        extra_ca = str(self.config.get("ca-certificates") or "").strip()
+        if extra_ca and extra_ca not in full_ca_pem:
+            full_ca_pem = full_ca_pem + "\n" + extra_ca
+        return full_ca_pem
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Re-write the CA bundle to all old-interface relations when config changes.
+
+        When the operator updates ``ca-certificates`` (e.g. to add a root CA that
+        the upstream provider omits from its chain), this handler rebuilds the full
+        CA bundle from the current upstream provider certificates and re-writes it
+        to every active old-interface relation databag so that downstream charms
+        pick up the change without waiting for a certificate renewal.
+        """
+        provider_certs = self._upstream_handler.get_provider_certificates()
+        if provider_certs:
+            # All certs share the same CA hierarchy; use the first one to rebuild the bundle.
+            first = provider_certs[0]
+            full_ca_pem = self._build_full_ca_pem(
+                str(first.ca), first.chain, str(first.certificate)
+            )
+            self._old_handler.write_ca(ca=full_ca_pem)
+        else:
+            logger.debug(
+                "ca-certificates config updated but no upstream provider certs available yet; "
+                "CA bundle will be applied on next certificate_available event"
+            )
         self.reconcile(event)
 
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
@@ -176,6 +263,8 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         relation_id = int(mapping["relation-id"])
         requirer_unit_name = mapping["requirer-unit"]
         private_key_pem = mapping["private-key"]
+        is_legacy = mapping.get(JUJU_SECRET_IS_LEGACY_KEY, "false") == "true"
+        is_client = mapping.get(JUJU_SECRET_IS_CLIENT_KEY, "false") == "true"
 
         relation = None
         with contextlib.suppress(ops.RelationNotFoundError):
@@ -189,14 +278,26 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             revoke_csr_mapping(self, csr_pem)
             return
 
-        self._old_handler.write_certificate(
-            relation_id=relation_id,
-            requirer_unit_name=requirer_unit_name,
-            common_name=str(event.certificate.common_name),
-            cert=str(event.certificate),
-            key=private_key_pem,
-            ca=str(event.ca),
-        )
+        leaf_pem = str(event.certificate)
+        full_ca_pem = self._build_full_ca_pem(str(event.ca), event.chain, leaf_pem)
+
+        if is_client:
+            self._old_handler.write_client_cert(
+                relation_id=relation_id,
+                cert=str(event.certificate),
+                key=private_key_pem,
+            )
+        else:
+            self._old_handler.write_certificate(
+                relation_id=relation_id,
+                requirer_unit_name=requirer_unit_name,
+                common_name=str(event.certificate.common_name),
+                cert=str(event.certificate),
+                key=private_key_pem,
+                ca=full_ca_pem,
+                is_legacy=is_legacy,
+            )
+        self._old_handler.write_ca(ca=full_ca_pem)
         self.reconcile()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:

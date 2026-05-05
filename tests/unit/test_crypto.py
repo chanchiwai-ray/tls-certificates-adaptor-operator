@@ -4,12 +4,13 @@
 """Unit tests for crypto module."""
 
 import hashlib
+import ipaddress
 
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, load_pem_private_key
 
-from crypto import build_csr, csr_sha256_hex, generate_private_key
+from crypto import build_csr, classify_sans, csr_sha256_hex, generate_private_key
 
 
 class TestGeneratePrivateKey:
@@ -86,6 +87,41 @@ class TestBuildCsr:
 
         assert csr_sha256_hex(csr1) != csr_sha256_hex(csr2)
 
+    def test_ip_sans_placed_in_ip_san_extension(self):
+        """
+        arrange: A valid RSA private key with a mixed SAN list containing an IP address.
+        act: Call build_csr with an IP address as one of the SANs.
+        assert: The IP address appears in the IP SAN extension, not in DNS SANs.
+        """
+        key_pem = generate_private_key()
+
+        csr_pem = build_csr(key_pem, "cinder.internal", ["10.149.56.105"])
+
+        csr = x509.load_pem_x509_csr(csr_pem.encode())
+        san_ext = csr.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+        ip_addrs = san_ext.value.get_values_for_type(x509.IPAddress)
+        dns_names = san_ext.value.get_values_for_type(x509.DNSName)
+        assert ipaddress.IPv4Address("10.149.56.105") in ip_addrs
+        assert "10.149.56.105" not in dns_names
+
+    def test_mixed_sans_classified_correctly(self):
+        """
+        arrange: A valid RSA private key with a list containing both a DNS name and an IP.
+        act: Call build_csr.
+        assert: DNS name is in DNS SANs; IP address is in IP SANs.
+        """
+        key_pem = generate_private_key()
+
+        csr_pem = build_csr(key_pem, "keystone.internal", ["keystone.internal", "10.0.0.1"])
+
+        csr = x509.load_pem_x509_csr(csr_pem.encode())
+        san_ext = csr.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+        dns_names = san_ext.value.get_values_for_type(x509.DNSName)
+        ip_addrs = san_ext.value.get_values_for_type(x509.IPAddress)
+        assert "keystone.internal" in dns_names
+        assert ipaddress.IPv4Address("10.0.0.1") in ip_addrs
+        assert "10.0.0.1" not in dns_names
+
     def test_empty_sans_produces_valid_csr(self):
         """
         arrange: A valid RSA private key.
@@ -99,6 +135,65 @@ class TestBuildCsr:
         csr = x509.load_pem_x509_csr(csr_pem.encode())
         cn_attrs = csr.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
         assert cn_attrs[0].value == "keystone.internal"
+
+
+class TestClassifySans:
+    """Tests for classify_sans()."""
+
+    def test_ip_addresses_go_to_ip_sans(self):
+        """
+        arrange: A list containing only IP addresses.
+        act: Call classify_sans.
+        assert: All entries are in ip_sans; dns_sans is empty.
+        """
+        dns_sans, ip_sans = classify_sans(["10.149.56.105", "192.168.1.1"])
+
+        assert dns_sans == []
+        assert set(ip_sans) == {"10.149.56.105", "192.168.1.1"}
+
+    def test_dns_names_go_to_dns_sans(self):
+        """
+        arrange: A list containing only DNS names.
+        act: Call classify_sans.
+        assert: All entries are in dns_sans; ip_sans is empty.
+        """
+        dns_sans, ip_sans = classify_sans(["keystone.internal", "nova.svc"])
+
+        assert set(dns_sans) == {"keystone.internal", "nova.svc"}
+        assert ip_sans == []
+
+    def test_mixed_list_is_classified_correctly(self):
+        """
+        arrange: A list with both a DNS name and an IP address.
+        act: Call classify_sans.
+        assert: DNS name in dns_sans; IP address in ip_sans.
+        """
+        dns_sans, ip_sans = classify_sans(["keystone.internal", "10.0.0.1"])
+
+        assert dns_sans == ["keystone.internal"]
+        assert ip_sans == ["10.0.0.1"]
+
+    def test_empty_list_returns_two_empty_lists(self):
+        """
+        arrange: An empty SANs list.
+        act: Call classify_sans.
+        assert: Both dns_sans and ip_sans are empty.
+        """
+        dns_sans, ip_sans = classify_sans([])
+
+        assert dns_sans == []
+        assert ip_sans == []
+
+    def test_ipv6_address_classified_as_ip(self):
+        """
+        arrange: A list containing an IPv6 address.
+        act: Call classify_sans.
+        assert: IPv6 address is in ip_sans.
+        """
+        dns_sans, ip_sans = classify_sans(["::1"])
+
+        assert dns_sans == []
+        assert ip_sans == ["::1"]
 
 
 class TestCsrSha256Hex:

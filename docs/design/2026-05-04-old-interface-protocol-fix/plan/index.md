@@ -1,0 +1,28 @@
+---
+title: Fix old-interface (v1) relation data protocol
+status: Done
+date: 2026-05-04
+---
+
+# Plan: Fix old-interface (v1) relation data protocol
+
+**Spec**: `docs/design/2026-05-04-old-interface-protocol-fix/specification.md`
+
+**ADRs**:
+
+- `docs/design/2026-05-04-old-interface-protocol-fix/001-decision.md`
+
+## PRs
+
+- [x] PR 001 — Fix old-interface protocol: tasks 001, 002, 003, 004, 005 (reviewed)
+- [x] PR 002 — Production hotfixes: classify IP SANs, re-process relations on upgrade_charm (reviewed)
+
+## Task checklist
+
+- [x] `001-protocol-fix/001-extend-certificate-request-model` — Add `is_legacy: bool` field to `CertificateRequest`
+- [x] `001-protocol-fix/002-fix-get-certificate-requests` — Parse batch (dict) and legacy (direct-key) request formats
+- [x] `001-protocol-fix/003-fix-write-certificate-and-add-write-ca` — Write correct response keys per format; add `write_ca()`
+- [x] `001-protocol-fix/004-wire-is-legacy-through-charm` — Store `is-legacy` in mapping secret; call `write_ca()` on cert available
+- [x] `001-protocol-fix/005-unit-tests` — Unit tests for all new and fixed behaviour
+- [x] `002-hotfix/001-classify-ip-sans` — Add `classify_sans()` to `crypto.py`; route IPs to `sans_ip` in `new_tls_certificate.py` and `build_csr()`
+- [x] `002-hotfix/002-upgrade-charm-reprocess` — Add `_on_upgrade_charm` to re-process all active old-interface relations after `juju refresh`; add `upgrade_charm` to `refresh_events`
