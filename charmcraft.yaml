@@ -2,12 +2,12 @@
 # See LICENSE file for licensing details.
 
 type: charm
-name: tls-certificate-adaptor
-title: TLS Certificate Adaptor
+name: tls-certificates-adaptor
+title: TLS Certificates Adaptor
 summary: Bridges the legacy reactive tls-certificates interface with the modern tls-certificates-interface used by vault-k8s or lego-k8s.
 links:
-  source: https://github.com/chanchiwai-ray/tls-certificate-adaptor-operator
-  issues: https://github.com/chanchiwai-ray/tls-certificate-adaptor-operator/issues
+  source: https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator
+  issues: https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator/issues
 
 description: |
   A machine charm that bridges the legacy reactive tls-certificates interface

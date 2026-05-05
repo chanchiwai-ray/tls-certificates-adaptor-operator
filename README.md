@@ -7,70 +7,87 @@ Avoid using this README file for information that is maintained or published els
 
 Use links instead.
 -->
-# TLS Certificate Adaptor
+
+# TLS Certificates Adaptor
+
 <!-- Use this space for badges -->
 
-Describe your charm in 1-2 sentences. Include the software that the charm deploys (if applicable), and the substrate (VM/K8s).
+> **Note:** This is a transitional charm intended for existing Charmed OpenStack deployments (Yoga and earlier) that need to bridge the legacy `tls-certificates` interface with modern TLS providers. It is not intended for new OpenStack deployments. If you are planning a new OpenStack deployment, consider using [Canonical OpenStack](https://canonical.com/openstack) instead.
 
-Like any Juju charm, this charm supports one-line deployment, configuration, integration, scaling, and more. For Charmed tls-certificate-adaptor, this includes:
-* list or summary of app-specific features
+A machine charm that bridges the legacy reactive `tls-certificates` interface (v1, Charmed OpenStack Yoga and earlier) with the modern `tls-certificates-interface` (v4) used by `vault-k8s` and `lego-k8s`, enabling Charmed OpenStack services to obtain TLS certificates from modern providers without modification to either side.
 
-For information about how to deploy, integrate, and manage this charm, see the Official [tls-certificate-adaptor Documentation](https://charmhub.io/tls-certificate-adaptor).
+Like any Juju charm, this charm supports one-line deployment, configuration, integration, scaling, and more. For Charmed tls-certificates-adaptor, this includes:
+
+- Automatic CSR generation and forwarding to the upstream TLS provider
+- Certificate delivery to all connected legacy OpenStack services
+- Full CA chain assembly, including optional extra CA certificates via config
+- Transparent certificate renewal managed by the upstream library
+
+For information about how to deploy, integrate, and manage this charm, see the Official [tls-certificates-adaptor Documentation](https://charmhub.io/tls-certificates-adaptor).
 
 ## Get started
-<!--If the charm already contains a relevant how-to guide or tutorial in its documentation,
-use this section to link the documentation. You don’t need to duplicate documentation here.
-If the tutorial is more complex than getting started, then provide brief descriptions of the
-steps needed for the simplest possible deployment. Make sure to include software and hardware
-prerequisites.
 
-This section could be structured in the following way:
+### Prerequisites
 
-### Set up
-<Steps for setting up the environment (e.g. via Multipass)>
+- A Juju model with Ubuntu 22.04 or 24.04 machines
+- An upstream TLS provider deployed in a reachable Juju model (e.g. `vault-k8s` or `lego-k8s`)
+- One or more Charmed OpenStack services that consume the legacy `tls-certificates` interface (e.g. `keystone`, `nova-cloud-controller`, `cinder`)
 
 ### Deploy
-<Steps for deploying the charm>
 
--->
+```bash
+juju deploy tls-certificates-adaptor
+```
+
+### Integrate with an upstream TLS provider
+
+```bash
+# The new vault: https://canonical-vault-charms.readthedocs-hosted.com/en/latest/
+juju relate tls-certificates-adaptor:certificates-upstream vault
+
+# The new vault needs a certificates providers e.g. self-signed-certificates charm: https://charmhub.io/self-signed-certificates
+juju deploy self-signed-certificates
+juju relate vault self-signed-certificates
+
+# Configure the vault pki_* config options as needed, e.g.
+juju config vault pki_ca_common_name="My Root CA" pki_allow_any_name=true pki_allow_ip_sans=true pki_allow_subdomains=true
+```
+
+### Integrate with legacy OpenStack services
+
+```bash
+juju relate keystone:certificates tls-certificates-adaptor:certificates
+juju relate cinder:certificates tls-certificates-adaptor:certificates
+juju relate nova-cloud-controller:certificates tls-certificates-adaptor:certificates
+...
+```
 
 ### Basic operations
-<!--Brief walkthrough of performing standard configurations or operations.
 
-Use this section is to emphasize features or capabilities of the charm.
-Link to any relevant how-to guides here.
+**Append an extra root CA to the delivered chain** (useful when the upstream provider uses an intermediate CA not rooted in a well-known CA):
 
-Use this section to provide information on important actions, required configurations, or
-other operations the user should know about. You don’t need to list every action or configuration.
-Link the Charmhub documentation for actions and configurations if you write about them.
+```bash
+juju config tls-certificates-adaptor ca-certificates="$(cat /path/to/root-ca.pem)"
+```
 
-You may also want to link to the `charmcraft.yaml` file here.
--->
+## Integrations
 
-## Integrations (optional)
-<!-- Information about particularly relevant interfaces, endpoints or libraries related to the
-charm. For example, peer relation endpoints required by other charms for integration.
-
-Otherwise, include a link the Charmhub documentation on integrations.
--->
+| Relation name           | Role     | Interface          | Description                                                      |
+| ----------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
+| `certificates`          | Provider | `tls-certificates` | Legacy v1 interface consumed by Charmed OpenStack services       |
+| `certificates-upstream` | Requirer | `tls-certificates` | Modern v4 interface provided by vault-k8s or lego-k8s (limit: 1) |
 
 ## Learn more
-<!--
-Provide a list of resources, including the official documentation, developer documentation,
-an official website for the software and a troubleshooting guide. Note that this list is not
-exhaustive or always relevant for every charm. If there is no official troubleshooting guide,
-include a link to the relevant Matrix channel.
--->
 
-* [Read more]() <!--Link to the charm's official documentation-->
-* [Developer documentation]() <!--Link to any developer documentation (could be upstream)-->
-* [Official webpage]() <!--(Optional) Link to official upstream webpage/blog/marketing content-->
-* [Troubleshooting]() <!--(Optional) Link to a page or section about troubleshooting/FAQ-->
+- [Read more](https://charmhub.io/tls-certificates-adaptor)
+- [Developer documentation](https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator)
+- [tls-certificates-interface library](https://charmhub.io/tls-certificates-interface)
+- [Troubleshooting](https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator/issues)
 
 ## Project and community
-* [Issues]() <!--Link to GitHub issues (if applicable)-->
-* [Contributing]() <!--Link to any contribution guides, preferably for the source code-->
-* [Matrix]() <!--Link to contact info (if applicable), e.g. Matrix channel-->
-* [Launchpad]() <!--Link to Launchpad (if applicable)-->
+
+- [Issues](https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator/issues)
+- [Contributing](CONTRIBUTING.md)
+- [Matrix](https://matrix.to/#/#charmhub-charmdev:ubuntu.com)
 
 ## Licensing and trademark (optional)

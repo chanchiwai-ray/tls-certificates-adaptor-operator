@@ -4,7 +4,7 @@
 variable "app_name" {
   description = "Name of the application in the Juju model."
   type        = string
-  default     = "tls-certificate-adaptor"
+  default     = "tls-certificates-adaptor"
 }
 
 variable "base" {
@@ -20,7 +20,7 @@ variable "channel" {
 }
 
 variable "config" {
-  description = "Application config. Details about available options can be found at https://charmhub.io/tls-certificate-adaptor/configurations."
+  description = "Application config. Details about available options can be found at https://charmhub.io/tls-certificates-adaptor/configurations."
   type        = map(string)
   default     = {}
 }

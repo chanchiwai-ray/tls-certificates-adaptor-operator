@@ -5,6 +5,11 @@ name: Check
 
 on:
   pull_request:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -16,12 +21,15 @@ jobs:
         python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v7.6.0
         with:
           python-version: ${{ matrix.python-version }}
+
       - name: Install tox
         run: uv tool install tox --with tox-uv
+
       - name: Run code quality checks
         run: tox
 
@@ -31,49 +39,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
       - name: Pack charm
         id: pack
         uses: canonical/craft-actions/charmcraft/pack@main
+
       - name: Upload charm artifact
         uses: actions/upload-artifact@v4
         with:
           name: charm
           path: "*.charm"
-
-  integration:
-    name: Integration tests
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download charm artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: charm
-          path: built-charm
-      - name: List the names of the downloaded charms
-        run: |
-          ls built-charm/*.charm
-      - name: Set up MicroK8s
-        run: |
-          sudo snap install microk8s --channel=1.32-strict/stable --classic
-          sudo microk8s enable hostpath-storage dns
-          sudo usermod -aG snap_microk8s "$USER"
-          sudo chown -R root:snap_microk8s /var/snap/microk8s/common/.kube
-          mkdir -p ~/.kube
-          sudo microk8s config > ~/.kube/config
-          sudo microk8s kubectl wait --for=condition=Ready node --all --timeout=120s
-      - name: Set up Juju
-        run: |
-          sudo snap install juju --channel=3/stable
-          mkdir -p ~/.local/share/juju
-          juju bootstrap microk8s microk8s-controller
-          juju add-model test
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7.6.0
-      - name: Install tox
-        run: uv tool install tox --with tox-uv
-      - name: Run integration tests
-        env:
-          CHARM_BUILD_DIR: ${{ github.workspace }}/built-charm
-        run: tox -e integration

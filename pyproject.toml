@@ -2,9 +2,9 @@
 # See LICENSE file for licensing details.
 
 [project]
-name = "tls-certificate-adaptor"
-version = "0.0.0"
-description = "Bridges the legacy reactive tls-certificates interface with the modern tls-certificates-interface used by vault-k8s."
+name = "tls-certificates-adaptor"
+version = "1.0.0"
+description = "Bridges the legacy reactive tls-certificates interface with the modern tls-certificates-interface used by the new vault or lego."
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
