@@ -5,7 +5,7 @@ type: charm
 name: tls-certificates-adaptor
 title: TLS Certificates Adaptor
 summary: Adaptor charm for legacy and v4 TLS certificates interface
-description: |
+description: >
   A machine charm that bridges the legacy reactive ``tls-certificates`` interface (v1, Charmed
   OpenStack Yoga and earlier) with the modern [``tls-certificates-interface`` (v4,
   ``TLSCertificatesRequiresV4``)](https://charmhub.io/tls-certificates-interface) used by vault and
@@ -16,7 +16,7 @@ description: |
   the ``certificates`` relation, and consumes the new v4 ``tls-certificates-interface`` from an
   upstream TLS provider via the ``certificates-upstream`` relation.
 
-  *Note:** This is a transitional charm intended for existing Charmed OpenStack deployments (Yoga
+  **Note:** This is a transitional charm intended for existing Charmed OpenStack deployments (Yoga
   and earlier) that need to bridge the legacy `tls-certificates` interface with modern TLS
   providers. It is not intended for new OpenStack deployments. If you are planning a new OpenStack
   deployment, consider using [Canonical OpenStack](https://canonical.com/openstack) instead.
