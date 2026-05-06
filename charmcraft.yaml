@@ -4,22 +4,30 @@
 type: charm
 name: tls-certificates-adaptor
 title: TLS Certificates Adaptor
-summary: Bridges the legacy reactive tls-certificates interface with the modern tls-certificates-interface used by vault-k8s or lego-k8s.
-links:
-  source: https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator
-  issues: https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator/issues
-
+summary: Adaptor charm for legacy and v4 TLS certificates interface
 description: |
-  A machine charm that bridges the legacy reactive tls-certificates interface
-  (v1, Charmed OpenStack Yoga and earlier) with the modern tls-certificates-interface
-  (v4, TLSCertificatesRequiresV4) used by vault-k8s and lego-k8s, enabling
-  Charmed OpenStack services to obtain TLS certificates from modern providers
+  A machine charm that bridges the legacy reactive ``tls-certificates`` interface (v1, Charmed
+  OpenStack Yoga and earlier) with the modern [``tls-certificates-interface`` (v4,
+  ``TLSCertificatesRequiresV4``)](https://charmhub.io/tls-certificates-interface) used by vault and
+  lego, enabling Charmed OpenStack services to obtain TLS certificates from modern providers
   without modification to either side.
 
-  The charm provides the old v1 tls-certificates interface to downstream
-  OpenStack services via the ``certificates`` relation, and consumes the new v4
-  tls-certificates interface from an upstream TLS provider via the
-  ``certificates-upstream`` relation.
+  The charm provides the old v1 ``tls-certificates`` interface to downstream OpenStack services via
+  the ``certificates`` relation, and consumes the new v4 ``tls-certificates-interface`` from an
+  upstream TLS provider via the ``certificates-upstream`` relation.
+
+  *Note:** This is a transitional charm intended for existing Charmed OpenStack deployments (Yoga
+  and earlier) that need to bridge the legacy `tls-certificates` interface with modern TLS
+  providers. It is not intended for new OpenStack deployments. If you are planning a new OpenStack
+  deployment, consider using [Canonical OpenStack](https://canonical.com/openstack) instead.
+
+links:
+  website:
+    - https://charmhub.io/tls-certificates-adaptor
+  source:
+    - https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator
+  issues:
+    - https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator/issues
 
 platforms:
   ubuntu@22.04:amd64:
@@ -47,10 +55,9 @@ config:
       type: string
       default: ""
       description: |
-        PEM-encoded CA certificate bundle to append to the CA chain delivered to
-        old-interface (v1) requirers.  Use this when the upstream TLS provider
-        does not include the full chain up to the root CA in its relation data
-        (e.g. when vault uses an intermediate CA issued by self-signed-certificates-operator).
-        Paste one or more concatenated PEM blocks here.  The bundle is appended
-        after event.ca and event.chain when writing the ``ca`` key to the legacy
+        PEM-encoded CA certificate bundle to append to the CA chain delivered to old-interface (v1)
+        requirers.  Use this when the upstream TLS provider does not include the full chain up to
+        the root CA in its relation data (e.g. when vault uses an intermediate CA issued by
+        self-signed-certificates-operator). Paste one or more concatenated PEM blocks here.  The
+        bundle is appended after event.ca and event.chain when writing the ``ca`` key to the legacy
         relation databag.

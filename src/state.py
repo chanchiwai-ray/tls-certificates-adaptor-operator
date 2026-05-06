@@ -36,8 +36,7 @@ class CharmState(BaseModel):
         """Build a CharmState from the charm instance and the old-interface relation handler.
 
         Loads charm configuration and aggregates relation data into a single
-        state object.  Accepts the handler rather than instantiating it here
-        (dependency injection).
+        state object.
 
         Args:
             charm (ops.CharmBase): The charm instance, used to load configuration.

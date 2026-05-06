@@ -27,8 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Promote charm
-        uses: canonical/charming-actions/promote-charm@2.6.0
+        uses: canonical/charming-actions/promote-charm@2.7.0
         with:
           credentials: ${{ secrets.CHARMHUB_TOKEN }}
           origin-channel: ${{ inputs.origin-channel }}

@@ -5,13 +5,11 @@ applyTo: "src/**/*.py, tests/**/*.py"
 
 # General coding style guidelines
 
-## Quotes
-
-- Prefer double quotes for strings, unless the string contains double quotes, in which case use single quotes to avoid escaping.
-
-## Indentation
+## Styles
 
 - Use 4 spaces per indentation level.
+- Prefer double quotes for strings, unless the string contains double quotes, in which case use single quotes to avoid escaping.
+- Arrange private methods, property, and public methods in that order within a class.
 
 ## Constants
 
@@ -28,13 +26,13 @@ applyTo: "src/**/*.py, tests/**/*.py"
 
 ## Functions and methods
 
-- Keep functions and methods focused on a single task (single responsibility principle).
-- Dependencies should be passed as arguments (dependency injection) rather than imported directly within the function or method.
 - Avoid side effects; functions should not modify global state or have hidden dependencies.
-- Arrange public methods before private methods in classes.
+- Dependencies should be passed as arguments (dependency injection) rather than imported directly within the function or method.
+- Keep functions and methods focused on a single task (single responsibility principle).
 
 ## Docstrings
 
+- Module docstrings should provide a high-level overview of the module's purpose and functionality.
 - Use docstrings to document all public classes, methods, and functions (except in `tests/`; but you should include a description on what's being tested).
 
 For example:
