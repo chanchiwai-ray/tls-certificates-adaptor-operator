@@ -94,7 +94,7 @@ class MyCharm(CharmBaseWithState):
             self._state = CharmState.from_charm(self.handler_a, self.handler_b)
         return self._state
 
-    def reconcile(self, event: ops.HookEvent) -> None:
+    def reconcile(self, event: ops.EventBase) -> None:
         # Delegate to the workload module with the current state.
         self.workload.configure(self.state)
         # Set charm status based on workload status or any errors encountered.

@@ -1,13 +1,10 @@
-<!-- Remember to update this file for your charm -- replace tls-certificate-adaptor and chanchiwai-ray/tls-certificate-adaptor-operator with the appropriate text. -->
-
 # Contributing
 
-This document explains the processes and practices recommended for contributing enhancements to the tls-certificate-adaptor charm.
+This document explains the processes and practices recommended for contributing enhancements to the tls-certificates-adaptor charm.
 
 ## Overview
 
-- Generally, before developing enhancements to this charm, you should consider [opening an issue ](link to issues page)
-  explaining your use case.
+- Generally, before developing enhancements to this charm, you should consider [opening an issue ](https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator/issues) explaining your use case.
 - Familiarizing yourself with the [Juju documentation](https://documentation.ubuntu.com/juju/3.6/howto/manage-charms/)
   will help you a lot when working on new features or bug fixes.
 - All enhancements require review before being merged. Code review typically examines
@@ -16,13 +13,6 @@ This document explains the processes and practices recommended for contributing 
   - user experience for Juju operators of this charm.
 - Once your pull request is approved, we squash and merge your pull request branch onto the `main` branch. This creates
   a linear Git commit history.
-
-## Changelog
-
-Please ensure that any new feature, fix, or significant change is documented by adding an entry to the
-[CHANGELOG.md](link to changelog) file. Use the date of the contribution as the header for new entries.
-
-To learn more about changelog best practices, visit [Keep a Changelog](https://keepachangelog.com/).
 
 ## Submissions
 
@@ -51,7 +41,7 @@ setup](https://documentation.ubuntu.com/juju/latest/howto/manage-your-juju-deplo
 The code for this charm can be downloaded as follows:
 
 ```
-git clone https://github.com/chanchiwai-ray/tls-certificate-adaptor-operator
+git clone https://github.com/chanchiwai-ray/tls-certificates-adaptor-operator
 ```
 
 Make sure to install [`uv`](https://docs.astral.sh/uv/). For example, you can install `uv` on Ubuntu using:
@@ -77,8 +67,6 @@ uv sync --all-groups
 source .venv/bin/activate
 ```
 
-### Test
-
 This project uses `tox` for managing test environments. There are some pre-configured environments
 that can be used for linting and formatting code when you're preparing contributions to the charm:
 
@@ -89,25 +77,6 @@ that can be used for linting and formatting code when you're preparing contribut
 - `tox -e lint-fix`: Runs auto-fixing for issues found by `ruff`.
 - `tox -e unit`: Runs the unit tests.
 - `tox -e integration`: Runs the integration tests.
-
-### Build the rock (optional)
-
-Use [Rockcraft](https://documentation.ubuntu.com/rockcraft/stable/) to create an OCI image for the tls-certificate-adaptor app,
-and then upload the image to a MicroK8s registry, which stores OCI archives so they can be downloaded and deployed.
-
-Enable the MicroK8s registry:
-
-```bash
-microk8s enable registry
-```
-
-The following commands pack the OCI image and push it into the MicroK8s registry:
-
-```bash
-cd <project_dir>
-rockcraft pack
-skopeo --insecure-policy copy --dest-tls-verify=false oci-archive:<rock-name>.rock docker://localhost:32000/<app-name>:latest
-```
 
 ### Build the charm
 
@@ -125,5 +94,5 @@ juju add-model charm-dev
 # Enable DEBUG logging
 juju model-config logging-config="<root>=INFO;unit=DEBUG"
 # Deploy the charm
-juju deploy ./tls-certificate-adaptor.charm
+juju deploy ./tls-certificates-adaptor.charm
 ```
