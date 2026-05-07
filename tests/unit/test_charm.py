@@ -138,20 +138,6 @@ class TestRelationEvents:
         state_out = context.run(context.on.relation_changed(old_relation, remote_unit=0), state_in)
         assert state_out.unit_status == ops.ActiveStatus()
 
-    def test_certificates_relation_broken_calls_reconcile(self, context: ops.testing.Context):
-        """
-        arrange: An old-interface relation that is being broken.
-        act: Emit certificates_relation_broken.
-        assert: reconcile() runs without error.
-        """
-        old_relation = ops.testing.Relation(
-            endpoint=OLD_INTERFACE_RELATION_NAME,
-            remote_app_name="keystone",
-        )
-        state_in = ops.testing.State(relations={old_relation})
-        state_out = context.run(context.on.relation_broken(old_relation), state_in)
-        assert state_out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")
-
 
 class TestCertificatesRelationChangedCsrMapping:
     """Tests for CSR mapping logic triggered by relation_changed events via reconcile."""

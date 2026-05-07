@@ -149,7 +149,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         from the local unit relation databag and removes each mapping secret.
         """
         self._old_handler.revoke_csr_mappings(event.relation)
-        self.reconcile()
 
 
 if __name__ == "__main__":  # pragma: nocover
