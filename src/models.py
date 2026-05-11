@@ -29,18 +29,3 @@ class CertificateRequest(BaseModel):
     is_legacy: bool = False
     is_client: bool = False
 
-
-class IssuedCertificate(BaseModel):
-    """A certificate issued by the upstream TLS provider and ready to deliver.
-
-    Attributes:
-        certificate: PEM-encoded leaf certificate.
-        ca: PEM-encoded CA certificate.
-        chain: List of PEM-encoded intermediate certificates.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    certificate: str  # PEM
-    ca: str  # PEM
-    chain: list[str]  # list of PEM
