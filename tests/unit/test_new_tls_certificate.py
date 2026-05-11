@@ -31,6 +31,40 @@ def _make_cr(
     )
 
 
+def _make_old_handler(requests: list[CertificateRequest]) -> MagicMock:
+    mock = MagicMock(spec=OldTLSCertificatesRelation)
+    mock.get_certificate_requests.return_value = requests
+    return mock
+
+
+def _make_csr_event(common_name: str, sans_dns=None, sans_ip=None) -> MagicMock:
+    """Build a mock CertificateAvailableEvent."""
+    event = MagicMock()
+    csr = MagicMock(spec=CertificateSigningRequest)
+    csr.common_name = common_name
+    csr.sans_dns = frozenset(sans_dns or [])
+    csr.sans_ip = frozenset(sans_ip or [])
+    event.certificate_signing_request = csr
+    event.certificate = "CERT_PEM"
+    event.ca = "CA_PEM"
+    event.chain = []
+    return event
+
+
+def _make_provider_cert(common_name: str, sans_dns=None, sans_ip=None) -> MagicMock:
+    """Build a mock ProviderCertificate."""
+    pc = MagicMock()
+    csr = MagicMock(spec=CertificateSigningRequest)
+    csr.common_name = common_name
+    csr.sans_dns = frozenset(sans_dns or [])
+    csr.sans_ip = frozenset(sans_ip or [])
+    pc.certificate_signing_request = csr
+    pc.certificate = "CERT_PEM"
+    pc.ca = "CA_PEM"
+    pc.chain = []
+    return pc
+
+
 class TestUpdateCertificateRequests:
     """Tests for NewTLSCertificatesRelation.update_certificate_requests()."""
 
@@ -94,27 +128,102 @@ class TestUpdateCertificateRequests:
         assert set(attrs[0].sans_dns) == {"cinder.internal"}
         assert set(attrs[0].sans_ip) == {"10.0.0.1"}
 
+    def test_duplicate_cn_sans_deduplicated(self):
+        """
+        arrange: Three CertificateRequests with identical (CN, SANs) from different units.
+        act: Call update_certificate_requests.
+        assert: Only one CertificateRequestAttributes is submitted to the library.
+        """
+        charm = MagicMock(spec=ops.CharmBase)
+
+        with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
+            mock_tls = MagicMock()
+            mock_tls_class.return_value = mock_tls
+
+            handler = NewTLSCertificatesRelation(charm)
+            handler.update_certificate_requests(
+                [
+                    _make_cr(
+                        "keystone.internal",
+                        ["keystone.internal"],
+                        requirer_unit_name="keystone/0",
+                    ),
+                    _make_cr(
+                        "keystone.internal",
+                        ["keystone.internal"],
+                        requirer_unit_name="keystone/1",
+                    ),
+                    _make_cr(
+                        "keystone.internal",
+                        ["keystone.internal"],
+                        requirer_unit_name="keystone/2",
+                    ),
+                ]
+            )
+
+        attrs = mock_tls.certificate_requests
+        assert len(attrs) == 1
+        assert attrs[0].common_name == "keystone.internal"
+
+
+class TestDeliverCertificates:
+    """Tests for NewTLSCertificatesRelation.deliver_certificates()."""
+
+    def test_no_private_key_skips_delivery(self):
+        """
+        arrange: private_key is None.
+        act: Call deliver_certificates.
+        assert: No write methods are called.
+        """
+        charm = MagicMock(spec=ops.CharmBase)
+        old_handler = _make_old_handler([])
+
+        with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
+            mock_tls = MagicMock()
+            mock_tls.private_key = None
+            mock_tls.get_provider_certificates.return_value = []
+            mock_tls_class.return_value = mock_tls
+
+            handler = NewTLSCertificatesRelation(charm)
+            handler.deliver_certificates(old_handler, "")
+
+        old_handler.write_certificate.assert_not_called()
+        old_handler.write_ca.assert_not_called()
+
+    def test_delivers_all_provider_certs(self):
+        """
+        arrange: Two ProviderCertificates with matching requests; private_key is set.
+        act: Call deliver_certificates.
+        assert: write_certificate is called for each matching request.
+        """
+        charm = MagicMock(spec=ops.CharmBase)
+        relation = MagicMock(spec=ops.Relation)
+        relation.active = True
+        charm.model.get_relation.return_value = relation
+
+        crs = [
+            _make_cr("keystone.internal", ["keystone.internal"], relation_id=1),
+            _make_cr("cinder.internal", ["cinder.internal"], relation_id=2),
+        ]
+        old_handler = _make_old_handler(crs)
+
+        with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
+            mock_tls = MagicMock()
+            mock_tls.private_key = "KEY"
+            mock_tls.get_provider_certificates.return_value = [
+                _make_provider_cert("keystone.internal", sans_dns=["keystone.internal"]),
+                _make_provider_cert("cinder.internal", sans_dns=["cinder.internal"]),
+            ]
+            mock_tls_class.return_value = mock_tls
+
+            handler = NewTLSCertificatesRelation(charm)
+            handler.deliver_certificates(old_handler, "")
+
+        assert old_handler.write_certificate.call_count == 2
+
 
 class TestHandleCertificateAvailable:
     """Tests for NewTLSCertificatesRelation.handle_certificate_available()."""
-
-    def _make_event(self, common_name: str, sans_dns=None, sans_ip=None):
-        """Build a mock CertificateAvailableEvent."""
-        event = MagicMock()
-        csr = MagicMock(spec=CertificateSigningRequest)
-        csr.common_name = common_name
-        csr.sans_dns = frozenset(sans_dns or [])
-        csr.sans_ip = frozenset(sans_ip or [])
-        event.certificate_signing_request = csr
-        event.certificate = "CERT_PEM"
-        event.ca = "CA_PEM"
-        event.chain = []
-        return event
-
-    def _make_old_handler(self, requests: list[CertificateRequest]) -> MagicMock:
-        mock = MagicMock(spec=OldTLSCertificatesRelation)
-        mock.get_certificate_requests.return_value = requests
-        return mock
 
     def test_happy_path_calls_write_certificate(self):
         """
@@ -128,8 +237,8 @@ class TestHandleCertificateAvailable:
         charm.model.get_relation.return_value = relation
 
         cr = _make_cr("keystone.internal", ["keystone.internal"], relation_id=5)
-        old_handler = self._make_old_handler([cr])
-        event = self._make_event("keystone.internal", sans_dns=["keystone.internal"])
+        old_handler = _make_old_handler([cr])
+        event = _make_csr_event("keystone.internal", sans_dns=["keystone.internal"])
 
         with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
             mock_tls = MagicMock()
@@ -165,8 +274,8 @@ class TestHandleCertificateAvailable:
             requirer_unit_name="ovn-central/client",
             is_client=True,
         )
-        old_handler = self._make_old_handler([cr])
-        event = self._make_event("ovn-central-client")
+        old_handler = _make_old_handler([cr])
+        event = _make_csr_event("ovn-central-client")
 
         with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
             mock_tls = MagicMock()
@@ -188,11 +297,12 @@ class TestHandleCertificateAvailable:
         import logging
 
         charm = MagicMock(spec=ops.CharmBase)
-        old_handler = self._make_old_handler([])
-        event = self._make_event("unknown.cn")
+        old_handler = _make_old_handler([])
+        event = _make_csr_event("unknown.cn")
 
         with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
             mock_tls = MagicMock()
+            mock_tls.private_key = "KEY"
             mock_tls_class.return_value = mock_tls
 
             handler = NewTLSCertificatesRelation(charm)
@@ -203,11 +313,11 @@ class TestHandleCertificateAvailable:
         old_handler.write_ca.assert_not_called()
         assert any("No matching" in r.message for r in caplog.records)
 
-    def test_inactive_relation_logs_info_and_returns(self, caplog):
+    def test_inactive_relation_logs_info_and_skips_write_certificate(self, caplog):
         """
         arrange: A match is found but the old-interface relation is no longer active.
         act: Call handle_certificate_available.
-        assert: Info is logged; nothing is written.
+        assert: Info is logged; write_certificate is not called (write_ca still is).
         """
         import logging
 
@@ -217,11 +327,12 @@ class TestHandleCertificateAvailable:
         charm.model.get_relation.return_value = relation
 
         cr = _make_cr("keystone.internal", ["keystone.internal"], relation_id=5)
-        old_handler = self._make_old_handler([cr])
-        event = self._make_event("keystone.internal", sans_dns=["keystone.internal"])
+        old_handler = _make_old_handler([cr])
+        event = _make_csr_event("keystone.internal", sans_dns=["keystone.internal"])
 
         with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
             mock_tls = MagicMock()
+            mock_tls.private_key = "KEY"
             mock_tls_class.return_value = mock_tls
 
             handler = NewTLSCertificatesRelation(charm)
@@ -229,7 +340,55 @@ class TestHandleCertificateAvailable:
                 handler.handle_certificate_available(event, old_handler, "")
 
         old_handler.write_certificate.assert_not_called()
-        old_handler.write_ca.assert_not_called()
+
+    def test_multiple_units_same_cn_all_receive_certificate(self):
+        """
+        arrange: Three CertificateRequests with the same CN but different requirer units.
+        act: Call handle_certificate_available.
+        assert: write_certificate is called once per unit (3 times total).
+        """
+        charm = MagicMock(spec=ops.CharmBase)
+        relation = MagicMock(spec=ops.Relation)
+        relation.active = True
+        charm.model.get_relation.return_value = relation
+
+        crs = [
+            _make_cr(
+                "keystone.internal",
+                ["keystone.internal"],
+                relation_id=1,
+                requirer_unit_name="keystone/0",
+            ),
+            _make_cr(
+                "keystone.internal",
+                ["keystone.internal"],
+                relation_id=1,
+                requirer_unit_name="keystone/1",
+            ),
+            _make_cr(
+                "keystone.internal",
+                ["keystone.internal"],
+                relation_id=1,
+                requirer_unit_name="keystone/2",
+            ),
+        ]
+        old_handler = _make_old_handler(crs)
+        event = _make_csr_event("keystone.internal", sans_dns=["keystone.internal"])
+
+        with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
+            mock_tls = MagicMock()
+            mock_tls.private_key = "KEY"
+            mock_tls_class.return_value = mock_tls
+
+            handler = NewTLSCertificatesRelation(charm)
+            handler.handle_certificate_available(event, old_handler, "")
+
+        assert old_handler.write_certificate.call_count == 3
+        called_units = {
+            call.kwargs["requirer_unit_name"]
+            for call in old_handler.write_certificate.call_args_list
+        }
+        assert called_units == {"keystone/0", "keystone/1", "keystone/2"}
 
     def test_matching_uses_sorted_sans(self):
         """
@@ -243,9 +402,8 @@ class TestHandleCertificateAvailable:
         charm.model.get_relation.return_value = relation
 
         cr = _make_cr("cn.internal", ["z.internal", "a.internal"], relation_id=1)
-        old_handler = self._make_old_handler([cr])
-        # Event provides SANs in different order
-        event = self._make_event("cn.internal", sans_dns=["a.internal", "z.internal"])
+        old_handler = _make_old_handler([cr])
+        event = _make_csr_event("cn.internal", sans_dns=["a.internal", "z.internal"])
 
         with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
             mock_tls = MagicMock()
@@ -256,3 +414,33 @@ class TestHandleCertificateAvailable:
             handler.handle_certificate_available(event, old_handler, "")
 
         old_handler.write_certificate.assert_called_once()
+
+    def test_none_private_key_logs_error_and_returns(self, caplog):
+        """
+        arrange: A match is found and the relation is active, but private_key is None.
+        act: Call handle_certificate_available.
+        assert: Error is logged; nothing is written.
+        """
+        import logging
+
+        charm = MagicMock(spec=ops.CharmBase)
+        relation = MagicMock(spec=ops.Relation)
+        relation.active = True
+        charm.model.get_relation.return_value = relation
+
+        cr = _make_cr("keystone.internal", ["keystone.internal"], relation_id=5)
+        old_handler = _make_old_handler([cr])
+        event = _make_csr_event("keystone.internal", sans_dns=["keystone.internal"])
+
+        with patch("new_tls_certificate.TLSCertificatesRequiresV4") as mock_tls_class:
+            mock_tls = MagicMock()
+            mock_tls.private_key = None
+            mock_tls_class.return_value = mock_tls
+
+            handler = NewTLSCertificatesRelation(charm)
+            with caplog.at_level(logging.ERROR):
+                handler.handle_certificate_available(event, old_handler, "")
+
+        old_handler.write_certificate.assert_not_called()
+        old_handler.write_ca.assert_not_called()
+        assert any("Private key not yet available" in r.message for r in caplog.records)

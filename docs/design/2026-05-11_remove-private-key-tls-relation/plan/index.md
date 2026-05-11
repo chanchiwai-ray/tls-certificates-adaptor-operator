@@ -13,7 +13,7 @@ date: 2026-05-11
 
 ## PRs
 
-- [x] PR 001 — Simplify charm and update tests: tasks 001, 002, 003, 004, 005, 006 (ready for review)
+- [x] PR 001 — Simplify charm and update tests: tasks 001, 002, 003, 004, 005, 006 (reviewed)
 
 ## Task checklist
 

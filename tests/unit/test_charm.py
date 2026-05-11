@@ -24,6 +24,19 @@ _CERT_AVAILABLE_EVENT = TLSCertificatesRequiresV4.on.certificate_available  # ty
 
 # A session-level key and CSR for tests that need a real cert.
 _LIBRARY_KEY = PrivateKey.generate(key_size=2048)
+# Secret label used by TLSCertificatesRequiresV4 for the unit-owned private key.
+# Format: {LIBID}-private-key-{unit_number}-{relationship_name}
+_LIBID = "afd8c2bccf834997afce12c2706d2ede"
+_LIBRARY_KEY_SECRET_LABEL = f"{_LIBID}-private-key-0-{UPSTREAM_RELATION_NAME}"
+
+
+def _library_key_secret() -> ops.testing.Secret:
+    """Return a pre-seeded Juju Secret for the library's unit private key."""
+    return ops.testing.Secret(
+        {"private-key": str(_LIBRARY_KEY)},
+        label=_LIBRARY_KEY_SECRET_LABEL,
+        owner="unit",
+    )
 
 
 def _cert_req(common_name: str, sans: list[str]) -> str:
@@ -206,6 +219,71 @@ class TestCertificatesUpstreamRelationJoined:
         assert out.unit_status == ops.ActiveStatus()
 
 
+class TestCertificatesUpstreamRelationChanged:
+    """Tests for upstream relation_changed (triggers reconcile and cert delivery)."""
+
+    def test_upstream_relation_changed_delivers_cert_to_old_interface(
+        self,
+        context: ops.testing.Context,
+        ca_certificate: Certificate,
+        ca_private_key: PrivateKey,
+    ):
+        """
+        arrange: Upstream relation app databag contains an issued cert; old-interface
+                 relation has a pending request.
+        act: Fire certificates_upstream_relation_changed.
+        assert: The cert and key are written to the old-interface relation databag.
+        """
+        from charmlibs.interfaces.tls_certificates import CertificateRequestAttributes
+
+        attrs = CertificateRequestAttributes(
+            common_name="keystone.internal",
+            sans_dns=["keystone.internal"],
+            add_unique_id_to_subject_name=False,
+        )
+        csr = attrs.generate_csr(_LIBRARY_KEY)
+        cert = sign_csr(str(csr), ca_certificate, ca_private_key)
+
+        upstream_relation = ops.testing.Relation(
+            endpoint=UPSTREAM_RELATION_NAME,
+            remote_app_data={
+                "certificates": json.dumps(
+                    [
+                        {
+                            "ca": str(ca_certificate),
+                            "certificate_signing_request": str(csr),
+                            "certificate": str(cert),
+                            "chain": None,
+                        }
+                    ]
+                ),
+            },
+        )
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            remote_units_data={
+                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
+            },
+        )
+        state_in = ops.testing.State(
+            relations={upstream_relation, old_relation},
+            secrets={_library_key_secret()},
+        )
+
+        out = context.run(context.on.relation_changed(relation=upstream_relation), state_in)
+
+        assert out.unit_status == ops.ActiveStatus()
+        out_old_rel = out.get_relation(old_relation.id)
+        assert out_old_rel is not None
+        payload_raw = out_old_rel.local_unit_data.get("keystone_0.processed_requests", "")
+        assert payload_raw, "processed_requests should be written on upstream relation_changed"
+        payload = json.loads(payload_raw)
+        assert "keystone.internal" in payload
+        assert "cert" in payload["keystone.internal"]
+        assert "key" in payload["keystone.internal"]
+
+
 class TestCertificateAvailableDelivery:
     """Tests for _on_certificate_available."""
 
@@ -240,7 +318,10 @@ class TestCertificateAvailableDelivery:
         csr = attrs.generate_csr(_LIBRARY_KEY)
         cert = sign_csr(str(csr), ca_certificate, ca_private_key)
 
-        state_in = ops.testing.State(relations={old_relation, upstream_relation})
+        state_in = ops.testing.State(
+            relations={old_relation, upstream_relation},
+            secrets={_library_key_secret()},
+        )
 
         out = context.run(
             context.on.custom(
@@ -392,7 +473,8 @@ class TestCertificateAvailableDelivery:
         cert = sign_csr(str(csr), ca_certificate, ca_private_key)
 
         state_in = ops.testing.State(
-            relations={keystone_relation, cinder_relation, upstream_relation}
+            relations={keystone_relation, cinder_relation, upstream_relation},
+            secrets={_library_key_secret()},
         )
 
         out = context.run(

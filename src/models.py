@@ -28,4 +28,3 @@ class CertificateRequest(BaseModel):
     relation_id: int
     is_legacy: bool = False
     is_client: bool = False
-

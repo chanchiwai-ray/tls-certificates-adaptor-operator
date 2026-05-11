@@ -65,6 +65,10 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             self.reconcile,
         )
         self.framework.observe(
+            self.on[UPSTREAM_RELATION_NAME].relation_changed,
+            self.reconcile,
+        )
+        self.framework.observe(
             self.tls_certificates.on.certificate_available,
             self._on_certificate_available,
         )
@@ -95,7 +99,14 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
 
         requests = self._old_handler.get_certificate_requests()
         self._upstream_handler.update_certificate_requests(requests)
+        self._upstream_handler.deliver_certificates(
+            self._old_handler,
+            self.state.extra_ca_certificates,
+        )
 
+        # Write the CA bundle to all old-interface relations even when no cert
+        # requests have been submitted yet (e.g. requirer joined after certs
+        # were already issued).
         if provider_certs := self.tls_certificates.get_provider_certificates():
             first = provider_certs[0]
             full_ca_pem = build_ca_bundle(

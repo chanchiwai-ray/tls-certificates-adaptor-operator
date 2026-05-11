@@ -29,6 +29,7 @@ import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
     CertificateRequestAttributes,
+    CertificateSigningRequest,
     TLSCertificatesRequiresV4,
 )
 
@@ -75,13 +76,26 @@ class NewTLSCertificatesRelation:
         assigns them to the library, and calls ``sync()`` to submit new CSRs
         and clean up stale ones.
 
+        Deduplicates by ``(common_name, sorted_dns_sans, sorted_ip_sans)`` so
+        that multiple requirer units requesting the same CN+SANs result in only
+        one upstream CSR.
+
         Args:
             requests (list[CertificateRequest]): The current set of certificate requests
                 from the old-interface handler.
         """
+        seen: set[tuple] = set()
         attrs = []
         for cr in requests:
             dns_sans, ip_sans = classify_sans(cr.sans)
+            key = (
+                cr.common_name,
+                tuple(sorted(dns_sans)),
+                tuple(sorted(ip_sans)),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
             attrs.append(
                 CertificateRequestAttributes(
                     common_name=cr.common_name,
@@ -92,6 +106,39 @@ class NewTLSCertificatesRelation:
             )
         self._tls.certificate_requests = attrs
         self._tls.sync()
+
+    def deliver_certificates(
+        self,
+        old_handler: OldTLSCertificatesRelation,
+        extra_ca_certificates: str,
+    ) -> None:
+        """Deliver all currently available provider certificates to old-interface requirers.
+
+        Iterates every :class:`~charmlibs.interfaces.tls_certificates.ProviderCertificate`
+        held by the upstream library and calls :meth:`_deliver_one` for each,
+        ensuring that every old-interface requirer unit whose request matches an
+        issued certificate receives the cert, key, and CA — even if they joined
+        the relation after the original ``certificate_available`` event fired.
+
+        Args:
+            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
+                relations.
+            extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append
+                to the CA bundle (from charm config).
+        """
+        if self._tls.private_key is None:
+            logger.debug("Private key not yet available; skipping certificate delivery")
+            return
+
+        for pc in self._tls.get_provider_certificates():
+            self._deliver_one(
+                csr=pc.certificate_signing_request,
+                certificate_pem=str(pc.certificate),
+                ca_pem=str(pc.ca),
+                chain_pems=[str(c) for c in pc.chain],
+                old_handler=old_handler,
+                extra_ca_certificates=extra_ca_certificates,
+            )
 
     def handle_certificate_available(
         self,
@@ -105,27 +152,60 @@ class NewTLSCertificatesRelation:
         :class:`~models.CertificateRequest` by ``(common_name, sans)``, then
         writes the cert, key, and CA to the requirer's relation databag.
 
-        Logs an error and returns gracefully if no matching request is found
-        or if the old-interface relation is no longer active.
+        Logs an error and returns gracefully if no matching request is found.
 
         Args:
             event (CertificateAvailableEvent): The certificate available event.
-            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface relations.
+            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
+                relations.
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append
                 to the CA bundle (from charm config).
         """
-        csr = event.certificate_signing_request
+        self._deliver_one(
+            csr=event.certificate_signing_request,
+            certificate_pem=str(event.certificate),
+            ca_pem=str(event.ca),
+            chain_pems=[str(c) for c in event.chain],
+            old_handler=old_handler,
+            extra_ca_certificates=extra_ca_certificates,
+        )
+
+    def _deliver_one(
+        self,
+        csr: CertificateSigningRequest,
+        certificate_pem: str,
+        ca_pem: str,
+        chain_pems: list[str],
+        old_handler: OldTLSCertificatesRelation,
+        extra_ca_certificates: str,
+    ) -> None:
+        """Deliver one certificate to all matching old-interface requirer units.
+
+        Matches on ``(common_name, sorted_sans)`` against live relation data so
+        that the same cert is delivered to every requirer unit that requested it
+        (e.g. ``keystone/0``, ``keystone/1``, ``keystone/2`` on the same relation).
+
+        Args:
+            csr (CertificateSigningRequest): The CSR the certificate was issued for.
+            certificate_pem (str): PEM-encoded signed leaf certificate.
+            ca_pem (str): PEM-encoded CA certificate.
+            chain_pems (list[str]): PEM-encoded intermediate certificates.
+            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
+                relations.
+            extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append.
+        """
         common_name = str(csr.common_name)
         sans = sorted((csr.sans_dns or set()) | (csr.sans_ip or set()))
 
-        # Re-derive routing from live relation data.
-        matched: CertificateRequest | None = None
-        for cr in old_handler.get_certificate_requests():
-            if cr.common_name == common_name and sorted(cr.sans) == sans:
-                matched = cr
-                break
+        # Collect ALL matching requests: the same (CN, SANs) may be requested
+        # by multiple requirer units and every one must receive the certificate.
+        matched: list[CertificateRequest] = [
+            cr
+            for cr in old_handler.get_certificate_requests()
+            if cr.common_name == common_name and sorted(cr.sans) == sans
+        ]
 
-        if matched is None:
+        if not matched:
             logger.error(
                 "No matching certificate request found for CN=%r sans=%r; skipping delivery",
                 common_name,
@@ -133,42 +213,45 @@ class NewTLSCertificatesRelation:
             )
             return
 
-        relation: ops.Relation | None = None
-        with contextlib.suppress(ops.RelationNotFoundError):
-            relation = self._charm.model.get_relation(
-                OLD_INTERFACE_RELATION_NAME, matched.relation_id
-            )
-        if relation is None or not relation.active:
-            logger.info(
-                "Old-interface relation %d no longer active; skipping delivery for CN=%r",
-                matched.relation_id,
+        if self._tls.private_key is None:
+            logger.error(
+                "Private key not yet available for CN=%r; skipping delivery",
                 common_name,
             )
             return
 
-        leaf_pem = str(event.certificate)
-        full_ca_pem = build_ca_bundle(
-            str(event.ca),
-            [str(c) for c in event.chain],
-            leaf_pem,
-            extra_ca_certificates,
-        )
+        full_ca_pem = build_ca_bundle(ca_pem, chain_pems, certificate_pem, extra_ca_certificates)
         key = str(self._tls.private_key)
 
-        if matched.is_client:
-            old_handler.write_client_cert(
-                relation_id=matched.relation_id,
-                cert=leaf_pem,
-                key=key,
-            )
-        else:
-            old_handler.write_certificate(
-                relation_id=matched.relation_id,
-                requirer_unit_name=matched.requirer_unit_name,
-                common_name=common_name,
-                cert=leaf_pem,
-                key=key,
-                ca=full_ca_pem,
-                is_legacy=matched.is_legacy,
-            )
+        for cr in matched:
+            relation: ops.Relation | None = None
+            with contextlib.suppress(ops.RelationNotFoundError):
+                relation = self._charm.model.get_relation(
+                    OLD_INTERFACE_RELATION_NAME, cr.relation_id
+                )
+            if relation is None or not relation.active:
+                logger.info(
+                    "Old-interface relation %d no longer active; skipping delivery for CN=%r",
+                    cr.relation_id,
+                    common_name,
+                )
+                continue
+
+            if cr.is_client:
+                old_handler.write_client_cert(
+                    relation_id=cr.relation_id,
+                    cert=certificate_pem,
+                    key=key,
+                )
+            else:
+                old_handler.write_certificate(
+                    relation_id=cr.relation_id,
+                    requirer_unit_name=cr.requirer_unit_name,
+                    common_name=common_name,
+                    cert=certificate_pem,
+                    key=key,
+                    ca=full_ca_pem,
+                    is_legacy=cr.is_legacy,
+                )
+
         old_handler.write_ca(ca=full_ca_pem)
