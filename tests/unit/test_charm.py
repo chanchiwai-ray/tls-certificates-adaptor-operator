@@ -193,15 +193,15 @@ class TestUpgradeCharm:
         assert out.unit_status == ops.BlockedStatus("Missing upstream TLS provider relation")
 
 
-class TestCertificatesUpstreamRelationJoined:
-    """Tests for upstream relation_joined (triggers reconcile)."""
+class TestCertificatesUpstreamRelationChanged:
+    """Tests for upstream relation_changed (triggers reconcile and cert delivery)."""
 
-    def test_upstream_relation_joined_with_old_relation_sets_active(
+    def test_upstream_relation_changed_with_old_relation_sets_active(
         self, context: ops.testing.Context
     ):
         """
-        arrange: Old-interface relation exists; upstream relation joins.
-        act: Fire certificates_upstream_relation_joined.
+        arrange: Old-interface relation exists; upstream relation fires relation_changed.
+        act: Fire certificates_upstream_relation_changed.
         assert: Unit status is ActiveStatus.
         """
         old_relation = ops.testing.Relation(
@@ -214,13 +214,9 @@ class TestCertificatesUpstreamRelationJoined:
         )
         state = ops.testing.State(relations={old_relation, upstream_relation})
 
-        out = context.run(context.on.relation_joined(relation=upstream_relation), state)
+        out = context.run(context.on.relation_changed(relation=upstream_relation), state)
 
         assert out.unit_status == ops.ActiveStatus()
-
-
-class TestCertificatesUpstreamRelationChanged:
-    """Tests for upstream relation_changed (triggers reconcile and cert delivery)."""
 
     def test_upstream_relation_changed_delivers_cert_to_old_interface(
         self,

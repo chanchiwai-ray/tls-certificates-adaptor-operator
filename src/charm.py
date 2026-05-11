@@ -17,10 +17,10 @@ from constants import (
     OLD_INTERFACE_RELATION_NAME,
     UPSTREAM_RELATION_NAME,
 )
-from crypto import build_ca_bundle
 from new_tls_certificate import NewTLSCertificatesRelation
 from old_tls_certificate import OldTLSCertificatesRelation
 from state import CharmBaseWithState, CharmState
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +58,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         )
         self.framework.observe(
             self.on[OLD_INTERFACE_RELATION_NAME].relation_broken,
-            self._on_certificates_relation_broken,
-        )
-        self.framework.observe(
-            self.on[UPSTREAM_RELATION_NAME].relation_joined,
             self.reconcile,
         )
         self.framework.observe(
@@ -77,7 +73,7 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
     def state(self) -> CharmState:
         """The charm state, computed once per event and cached for the lifetime of this instance."""
         if self._state is None:
-            self._state = CharmState.from_charm(self, self._old_handler)
+            self._state = CharmState.from_charm(self)
         return self._state
 
     def reconcile(self, _: ops.HookEvent | None = None) -> None:
@@ -104,19 +100,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             self.state.extra_ca_certificates,
         )
 
-        # Write the CA bundle to all old-interface relations even when no cert
-        # requests have been submitted yet (e.g. requirer joined after certs
-        # were already issued).
-        if provider_certs := self.tls_certificates.get_provider_certificates():
-            first = provider_certs[0]
-            full_ca_pem = build_ca_bundle(
-                str(first.ca),
-                [str(c) for c in first.chain],
-                str(first.certificate),
-                self.state.extra_ca_certificates,
-            )
-            self._old_handler.write_ca(ca=full_ca_pem)
-
         self.unit.status = ops.ActiveStatus()
 
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
@@ -132,14 +115,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             self.state.extra_ca_certificates,
         )
         self.unit.status = ops.ActiveStatus()
-
-    def _on_certificates_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
-        """Handle a broken old-interface relation.
-
-        Calls reconcile so that the upstream library cleans up any CSRs that
-        were associated with the broken relation.
-        """
-        self.reconcile()
 
 
 if __name__ == "__main__":  # pragma: nocover

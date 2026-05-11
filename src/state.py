@@ -12,8 +12,6 @@ import ops
 from pydantic import BaseModel, ConfigDict
 
 from config import CharmConfig
-from models import CertificateRequest  # noqa: TC001
-from old_tls_certificate import OldTLSCertificatesRelation  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -23,35 +21,22 @@ class CharmState(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    certificate_requests: list[CertificateRequest]
     extra_ca_certificates: str = ""
 
     @classmethod
-    def from_charm(
-        cls,
-        charm: ops.CharmBase,
-        old_handler: OldTLSCertificatesRelation,
-    ) -> CharmState:
-        """Build a CharmState from the charm instance and the old-interface relation handler.
+    def from_charm(cls, charm: ops.CharmBase) -> CharmState:
+        """Build a CharmState from the charm instance.
 
-        Loads charm configuration and aggregates relation data into a single
-        state object.
+        Loads charm configuration into a single state object.
 
         Args:
             charm (ops.CharmBase): The charm instance, used to load configuration.
-            old_handler (OldTLSCertificatesRelation): Handler for all active old-interface (v1) relations.
-                Reads cert requests from all remote-unit databags across every
-                active relation.
 
         Returns:
-            CharmState: A CharmState with all pending certificate requests and resolved configuration.
+            CharmState: A CharmState with resolved configuration.
         """
         charm_config = CharmConfig.from_charm(charm)
-        certificate_requests = old_handler.get_certificate_requests()
-        return cls(
-            certificate_requests=certificate_requests,
-            extra_ca_certificates=charm_config.ca_certificates,
-        )
+        return cls(extra_ca_certificates=charm_config.ca_certificates)
 
 
 class CharmBaseWithState(ops.CharmBase, ABC):

@@ -120,6 +120,10 @@ class NewTLSCertificatesRelation:
         issued certificate receives the cert, key, and CA — even if they joined
         the relation after the original ``certificate_available`` event fired.
 
+        Also writes the CA bundle to all old-interface relations unconditionally
+        when at least one provider certificate exists, so that requirers that
+        have not yet submitted a cert request still receive the CA.
+
         Args:
             old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
                 relations.
@@ -130,7 +134,8 @@ class NewTLSCertificatesRelation:
             logger.debug("Private key not yet available; skipping certificate delivery")
             return
 
-        for pc in self._tls.get_provider_certificates():
+        provider_certs = self._tls.get_provider_certificates()
+        for pc in provider_certs:
             self._deliver_one(
                 csr=pc.certificate_signing_request,
                 certificate_pem=str(pc.certificate),
@@ -139,6 +144,16 @@ class NewTLSCertificatesRelation:
                 old_handler=old_handler,
                 extra_ca_certificates=extra_ca_certificates,
             )
+
+        if provider_certs:
+            first = provider_certs[0]
+            full_ca_pem = build_ca_bundle(
+                str(first.ca),
+                [str(c) for c in first.chain],
+                str(first.certificate),
+                extra_ca_certificates,
+            )
+            old_handler.write_ca(ca=full_ca_pem)
 
     def handle_certificate_available(
         self,
@@ -161,14 +176,20 @@ class NewTLSCertificatesRelation:
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append
                 to the CA bundle (from charm config).
         """
-        self._deliver_one(
+        ca_pem = str(event.ca)
+        chain_pems = [str(c) for c in event.chain]
+        certificate_pem = str(event.certificate)
+        delivered = self._deliver_one(
             csr=event.certificate_signing_request,
-            certificate_pem=str(event.certificate),
-            ca_pem=str(event.ca),
-            chain_pems=[str(c) for c in event.chain],
+            certificate_pem=certificate_pem,
+            ca_pem=ca_pem,
+            chain_pems=chain_pems,
             old_handler=old_handler,
             extra_ca_certificates=extra_ca_certificates,
         )
+        if delivered:
+            full_ca_pem = build_ca_bundle(ca_pem, chain_pems, certificate_pem, extra_ca_certificates)
+            old_handler.write_ca(ca=full_ca_pem)
 
     def _deliver_one(
         self,
@@ -178,7 +199,7 @@ class NewTLSCertificatesRelation:
         chain_pems: list[str],
         old_handler: OldTLSCertificatesRelation,
         extra_ca_certificates: str,
-    ) -> None:
+    ) -> bool:
         """Deliver one certificate to all matching old-interface requirer units.
 
         Matches on ``(common_name, sorted_sans)`` against live relation data so
@@ -193,6 +214,10 @@ class NewTLSCertificatesRelation:
             old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
                 relations.
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append.
+
+        Returns:
+            bool: True if at least one certificate was written; False if delivery was skipped
+                (no matching request or private key unavailable).
         """
         common_name = str(csr.common_name)
         sans = sorted((csr.sans_dns or set()) | (csr.sans_ip or set()))
@@ -211,14 +236,14 @@ class NewTLSCertificatesRelation:
                 common_name,
                 sans,
             )
-            return
+            return False
 
         if self._tls.private_key is None:
             logger.error(
                 "Private key not yet available for CN=%r; skipping delivery",
                 common_name,
             )
-            return
+            return False
 
         full_ca_pem = build_ca_bundle(ca_pem, chain_pems, certificate_pem, extra_ca_certificates)
         key = str(self._tls.private_key)
@@ -253,5 +278,4 @@ class NewTLSCertificatesRelation:
                     ca=full_ca_pem,
                     is_legacy=cr.is_legacy,
                 )
-
-        old_handler.write_ca(ca=full_ca_pem)
+        return True
