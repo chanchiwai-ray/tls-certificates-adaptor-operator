@@ -46,7 +46,7 @@ class TestGetCertificateRequests:
         )
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
@@ -76,7 +76,7 @@ class TestGetCertificateRequests:
         relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert len(requests) == 3
         server_reqs = [r for r in requests if not r.is_client]
@@ -104,7 +104,7 @@ class TestGetCertificateRequests:
         )
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
@@ -132,7 +132,7 @@ class TestGetCertificateRequests:
         )
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert len(requests) == 3
         server_reqs = [r for r in requests if not r.is_client]
@@ -155,7 +155,7 @@ class TestGetCertificateRequests:
         relation = _make_relation("keystone/0", {})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert requests == []
 
@@ -170,7 +170,7 @@ class TestGetCertificateRequests:
         relation = _make_relation("keystone/0", {"cert_requests": "not-json"})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert requests == []
 
@@ -186,7 +186,7 @@ class TestGetCertificateRequests:
         relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert requests == []
 
@@ -203,7 +203,7 @@ class TestGetCertificateRequests:
         )
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
@@ -225,7 +225,7 @@ class TestGetCertificateRequests:
         relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert len(requests) == 2
         server_req = next(r for r in requests if not r.is_client)
@@ -257,7 +257,7 @@ class TestWriteCertificate:
         from old_tls_certificate import OldTLSCertificatesRelation
 
         charm, local_databag = self._make_charm_for_write(relation_id=5)
-        OldTLSCertificatesRelation(charm, "").write_certificate(
+        OldTLSCertificatesRelation(charm).write_certificate(
             relation_id=5,
             requirer_unit_name="cinder/0",
             common_name="cinder.internal",
@@ -283,7 +283,7 @@ class TestWriteCertificate:
         from old_tls_certificate import OldTLSCertificatesRelation
 
         charm, local_databag = self._make_charm_for_write(relation_id=1)
-        handler = OldTLSCertificatesRelation(charm, "")
+        handler = OldTLSCertificatesRelation(charm)
         handler.write_certificate(
             relation_id=1,
             requirer_unit_name="keystone/0",
@@ -318,7 +318,7 @@ class TestWriteCertificate:
         from old_tls_certificate import OldTLSCertificatesRelation
 
         charm, local_databag = self._make_charm_for_write(relation_id=3)
-        OldTLSCertificatesRelation(charm, "").write_certificate(
+        OldTLSCertificatesRelation(charm).write_certificate(
             relation_id=3,
             requirer_unit_name="cinder/0",
             common_name="cinder.internal",
@@ -342,7 +342,7 @@ class TestWriteCertificate:
         from old_tls_certificate import OldTLSCertificatesRelation
 
         charm, local_databag = self._make_charm_for_write()
-        OldTLSCertificatesRelation(charm, "").write_certificate(
+        OldTLSCertificatesRelation(charm).write_certificate(
             relation_id=1,
             requirer_unit_name="keystone/0",
             common_name="keystone.internal",
@@ -365,7 +365,7 @@ class TestWriteCertificate:
         charm = MagicMock(spec=ops.CharmBase)
         charm.model.get_relation.return_value = None
 
-        OldTLSCertificatesRelation(charm, "").write_certificate(
+        OldTLSCertificatesRelation(charm).write_certificate(
             relation_id=999,
             requirer_unit_name="keystone/0",
             common_name="keystone.internal",
@@ -386,7 +386,7 @@ class TestWriteCertificate:
         charm, local_databag = self._make_charm_for_write(relation_id=1)
         local_databag["keystone_0.processed_requests"] = "not-valid-json"
 
-        OldTLSCertificatesRelation(charm, "").write_certificate(
+        OldTLSCertificatesRelation(charm).write_certificate(
             relation_id=1,
             requirer_unit_name="keystone/0",
             common_name="keystone.internal",
@@ -410,7 +410,7 @@ class TestWriteCertificate:
         charm, local_databag = self._make_charm_for_write(relation_id=1)
         local_databag["keystone_0.processed_requests"] = "[]"
 
-        OldTLSCertificatesRelation(charm, "").write_certificate(
+        OldTLSCertificatesRelation(charm).write_certificate(
             relation_id=1,
             requirer_unit_name="keystone/0",
             common_name="keystone.internal",
@@ -450,7 +450,7 @@ class TestWriteCa:
         from old_tls_certificate import OldTLSCertificatesRelation
 
         charm, databags = self._make_charm_multi_relation(2)
-        OldTLSCertificatesRelation(charm, "").write_ca(ca="CA_PEM")
+        OldTLSCertificatesRelation(charm).write_ca(ca="CA_PEM")
 
         for db in databags:
             assert db["ca"] == "CA_PEM"
@@ -471,7 +471,7 @@ class TestWriteClientCert:
         charm = MagicMock(spec=ops.CharmBase)
         charm.model.get_relation.return_value = None
 
-        OldTLSCertificatesRelation(charm, "").write_client_cert(
+        OldTLSCertificatesRelation(charm).write_client_cert(
             relation_id=999, cert="CERT", key="KEY"
         )
         # Should not raise
@@ -491,7 +491,7 @@ class TestWriteClientCert:
         relation.data = {charm.unit: databag}
         charm.model.get_relation.return_value = relation
 
-        OldTLSCertificatesRelation(charm, "").write_client_cert(
+        OldTLSCertificatesRelation(charm).write_client_cert(
             relation_id=1, cert="CLIENT_CERT_PEM", key="CLIENT_KEY_PEM"
         )
 
@@ -515,7 +515,7 @@ class TestGetCertificateRequestsEdgeCases:
         )
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         server_req = next(r for r in requests if not r.is_client)
         assert server_req.common_name == "cn.internal"
@@ -533,7 +533,7 @@ class TestGetCertificateRequestsEdgeCases:
         relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         server_reqs = [r for r in requests if not r.is_client]
         assert len(server_reqs) == 1
@@ -551,7 +551,7 @@ class TestGetCertificateRequestsEdgeCases:
         relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         assert requests == []
 
@@ -569,7 +569,7 @@ class TestGetCertificateRequestsEdgeCases:
         relation = _make_relation("keystone/0", {"cert_requests": cert_requests_data})
         charm = _make_charm_for_get([relation])
 
-        requests = OldTLSCertificatesRelation(charm, "").get_certificate_requests()
+        requests = OldTLSCertificatesRelation(charm).get_certificate_requests()
 
         server_reqs = [r for r in requests if not r.is_client]
         assert len(server_reqs) == 1

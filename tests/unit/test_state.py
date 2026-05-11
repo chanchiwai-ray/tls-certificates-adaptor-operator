@@ -19,12 +19,10 @@ def _make_charm(ca_certificates: str = "") -> MagicMock:
 
 def _make_old_handler(
     requests: list[CertificateRequest] | None = None,
-    fingerprints: dict[int, list[str]] | None = None,
 ) -> MagicMock:
     """Return a mock OldTLSCertificatesRelation that returns *requests* from get_certificate_requests."""
     mock = MagicMock(spec=OldTLSCertificatesRelation)
     mock.get_certificate_requests.return_value = requests if requests is not None else []
-    mock.get_csr_fingerprints.return_value = fingerprints if fingerprints is not None else {}
     return mock
 
 
@@ -48,13 +46,12 @@ class TestCharmState:
         """
         arrange: No old-interface relations and no issued certs from upstream.
         act: Call CharmState.from_charm with empty lists/mocks.
-        assert: certificate_requests and issued_certificates are empty.
+        assert: certificate_requests is empty and extra_ca_certificates is blank.
         """
         state = CharmState.from_charm(_make_charm(), _make_old_handler())
 
         assert state.certificate_requests == []
         assert state.extra_ca_certificates == ""
-        assert state.csr_fingerprints == {}
 
     def test_one_relation_with_requests_captured(self):
         """
@@ -80,17 +77,6 @@ class TestCharmState:
         state = CharmState.from_charm(_make_charm(), _make_old_handler())
 
         assert state.certificate_requests == []
-
-    def test_csr_fingerprints_populated_from_old_handler(self):
-        """
-        arrange: Old handler returns fingerprints for two relations.
-        act: Call CharmState.from_charm.
-        assert: csr_fingerprints is populated from the old handler.
-        """
-        fps = {1: ["aabbcc", "ddeeff"], 2: ["112233"]}
-        state = CharmState.from_charm(_make_charm(), _make_old_handler(fingerprints=fps))
-
-        assert state.csr_fingerprints == fps
 
     def test_extra_ca_certificates_loaded_from_config(self):
         """
