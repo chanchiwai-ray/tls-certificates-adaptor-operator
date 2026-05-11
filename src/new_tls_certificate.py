@@ -30,6 +30,8 @@ from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
     CertificateRequestAttributes,
     CertificateSigningRequest,
+    PrivateKey,
+    ProviderCertificate,
     TLSCertificatesRequiresV4,
 )
 
@@ -67,6 +69,24 @@ class NewTLSCertificatesRelation:
     def tls_certificates(self) -> TLSCertificatesRequiresV4:
         """The underlying TLSCertificatesRequiresV4 library instance."""
         return self._tls
+
+    def get_provider_certificates(self) -> list[ProviderCertificate]:
+        """Return all currently issued provider certificates.
+
+        Returns:
+            list[ProviderCertificate]: Issued certificates from the upstream provider,
+                or an empty list if none have been issued yet.
+        """
+        return self._tls.get_provider_certificates()
+
+    def get_private_key(self) -> PrivateKey | None:
+        """Return the library-managed private key for this unit, or None if unavailable.
+
+        Returns:
+            PrivateKey | None: The unit private key, or None if the upstream relation
+                has not been established yet.
+        """
+        return self._tls.private_key
 
     def update_certificate_requests(self, requests: list[CertificateRequest]) -> None:
         """Update the upstream library's certificate requests and sync.
@@ -109,44 +129,53 @@ class NewTLSCertificatesRelation:
 
     def deliver_certificates(
         self,
+        provider_certificates: list[ProviderCertificate],
+        certificate_requests: list[CertificateRequest],
+        private_key: PrivateKey | None,
         old_handler: OldTLSCertificatesRelation,
         extra_ca_certificates: str,
     ) -> None:
         """Deliver all currently available provider certificates to old-interface requirers.
 
         Iterates every :class:`~charmlibs.interfaces.tls_certificates.ProviderCertificate`
-        held by the upstream library and calls :meth:`_deliver_one` for each,
-        ensuring that every old-interface requirer unit whose request matches an
-        issued certificate receives the cert, key, and CA — even if they joined
-        the relation after the original ``certificate_available`` event fired.
+        and calls :meth:`_deliver_one` for each, ensuring that every old-interface
+        requirer unit whose request matches an issued certificate receives the cert,
+        key, and CA — even if they joined the relation after the original
+        ``certificate_available`` event fired.
 
         Also writes the CA bundle to all old-interface relations unconditionally
         when at least one provider certificate exists, so that requirers that
         have not yet submitted a cert request still receive the CA.
 
         Args:
+            provider_certificates (list[ProviderCertificate]): Currently issued
+                certificates from the upstream provider.
+            certificate_requests (list[CertificateRequest]): All pending cert requests
+                from old-interface requirer unit databags.
+            private_key (PrivateKey | None): The library-managed unit private key.
             old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
                 relations.
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append
                 to the CA bundle (from charm config).
         """
-        if self._tls.private_key is None:
+        if private_key is None:
             logger.debug("Private key not yet available; skipping certificate delivery")
             return
 
-        provider_certs = self._tls.get_provider_certificates()
-        for pc in provider_certs:
+        for pc in provider_certificates:
             self._deliver_one(
                 csr=pc.certificate_signing_request,
                 certificate_pem=str(pc.certificate),
                 ca_pem=str(pc.ca),
                 chain_pems=[str(c) for c in pc.chain],
+                certificate_requests=certificate_requests,
+                private_key=private_key,
                 old_handler=old_handler,
                 extra_ca_certificates=extra_ca_certificates,
             )
 
-        if provider_certs:
-            first = provider_certs[0]
+        if provider_certificates:
+            first = provider_certificates[0]
             full_ca_pem = build_ca_bundle(
                 str(first.ca),
                 [str(c) for c in first.chain],
@@ -158,19 +187,25 @@ class NewTLSCertificatesRelation:
     def handle_certificate_available(
         self,
         event: CertificateAvailableEvent,
+        certificate_requests: list[CertificateRequest],
+        private_key: PrivateKey | None,
         old_handler: OldTLSCertificatesRelation,
         extra_ca_certificates: str,
     ) -> None:
         """Deliver a signed certificate to the old-interface requirer.
 
-        Re-parses live old-interface relation data to find the matching
-        :class:`~models.CertificateRequest` by ``(common_name, sans)``, then
-        writes the cert, key, and CA to the requirer's relation databag.
+        Matches the event's CSR against the pre-fetched ``certificate_requests``
+        snapshot and writes the cert, key, and CA to all matching requirer
+        relation databags.
 
-        Logs an error and returns gracefully if no matching request is found.
+        Logs an error and returns gracefully if no matching request is found or
+        if the private key is unavailable.
 
         Args:
             event (CertificateAvailableEvent): The certificate available event.
+            certificate_requests (list[CertificateRequest]): All pending cert requests
+                from old-interface requirer unit databags.
+            private_key (PrivateKey | None): The library-managed unit private key.
             old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
                 relations.
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append
@@ -184,6 +219,8 @@ class NewTLSCertificatesRelation:
             certificate_pem=certificate_pem,
             ca_pem=ca_pem,
             chain_pems=chain_pems,
+            certificate_requests=certificate_requests,
+            private_key=private_key,
             old_handler=old_handler,
             extra_ca_certificates=extra_ca_certificates,
         )
@@ -197,27 +234,33 @@ class NewTLSCertificatesRelation:
         certificate_pem: str,
         ca_pem: str,
         chain_pems: list[str],
+        certificate_requests: list[CertificateRequest],
+        private_key: PrivateKey | None,
         old_handler: OldTLSCertificatesRelation,
         extra_ca_certificates: str,
     ) -> bool:
         """Deliver one certificate to all matching old-interface requirer units.
 
-        Matches on ``(common_name, sorted_sans)`` against live relation data so
-        that the same cert is delivered to every requirer unit that requested it
-        (e.g. ``keystone/0``, ``keystone/1``, ``keystone/2`` on the same relation).
+        Matches on ``(common_name, sorted_sans)`` against the pre-fetched
+        ``certificate_requests`` snapshot so that the same cert is delivered to
+        every requirer unit that requested it (e.g. ``keystone/0``, ``keystone/1``,
+        ``keystone/2`` on the same relation).
 
         Args:
             csr (CertificateSigningRequest): The CSR the certificate was issued for.
             certificate_pem (str): PEM-encoded signed leaf certificate.
             ca_pem (str): PEM-encoded CA certificate.
             chain_pems (list[str]): PEM-encoded intermediate certificates.
+            certificate_requests (list[CertificateRequest]): Pre-fetched snapshot of
+                all pending old-interface cert requests.
+            private_key (PrivateKey | None): The library-managed unit private key.
             old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
                 relations.
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append.
 
         Returns:
-            bool: True if at least one certificate was written; False if delivery was skipped
-                (no matching request or private key unavailable).
+            bool: True if at least one certificate was written; False if delivery was
+                skipped (no matching request or private key unavailable).
         """
         common_name = str(csr.common_name)
         sans = sorted((csr.sans_dns or set()) | (csr.sans_ip or set()))
@@ -226,7 +269,7 @@ class NewTLSCertificatesRelation:
         # by multiple requirer units and every one must receive the certificate.
         matched: list[CertificateRequest] = [
             cr
-            for cr in old_handler.get_certificate_requests()
+            for cr in certificate_requests
             if cr.common_name == common_name and sorted(cr.sans) == sans
         ]
 
@@ -238,7 +281,7 @@ class NewTLSCertificatesRelation:
             )
             return False
 
-        if self._tls.private_key is None:
+        if private_key is None:
             logger.error(
                 "Private key not yet available for CN=%r; skipping delivery",
                 common_name,
@@ -246,7 +289,7 @@ class NewTLSCertificatesRelation:
             return False
 
         full_ca_pem = build_ca_bundle(ca_pem, chain_pems, certificate_pem, extra_ca_certificates)
-        key = str(self._tls.private_key)
+        key = str(private_key)
 
         for cr in matched:
             relation: ops.Relation | None = None

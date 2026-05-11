@@ -530,7 +530,10 @@ class TestReconcileCaBundle:
             },
         )
         old_relation = ops.testing.Relation(endpoint=OLD_INTERFACE_RELATION_NAME)
-        state = ops.testing.State(relations={upstream_relation, old_relation})
+        state = ops.testing.State(
+            relations={upstream_relation, old_relation},
+            secrets={_library_key_secret()},
+        )
 
         out = context.run(context.on.config_changed(), state)
 
@@ -579,6 +582,7 @@ class TestReconcileCaBundle:
         state = ops.testing.State(
             relations={upstream_relation, old_relation},
             config={"ca-certificates": str(intermediate_ca_certificate)},
+            secrets={_library_key_secret()},
         )
 
         out = context.run(context.on.config_changed(), state)

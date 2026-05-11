@@ -73,15 +73,15 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
     def state(self) -> CharmState:
         """The charm state, computed once per event and cached for the lifetime of this instance."""
         if self._state is None:
-            self._state = CharmState.from_charm(self)
+            self._state = CharmState.from_charm(self, self._old_handler, self._upstream_handler)
         return self._state
 
     def reconcile(self, _: ops.HookEvent | None = None) -> None:
         """Process all old-interface relations and set unit status.
 
         Called from every event handler.  Idempotently submits certificate
-        requests to the upstream provider, writes the CA bundle when upstream
-        provider certificates are available, then updates the unit status.
+        requests to the upstream provider and delivers issued certificates back
+        to old-interface requirers, then updates the unit status.
 
         Sets BlockedStatus when either the upstream TLS provider relation or
         the old-interface relation is absent, otherwise ActiveStatus.
@@ -93,11 +93,14 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             self.unit.status = ops.BlockedStatus("Missing old TLS interface relation")
             return
 
-        requests = self._old_handler.get_certificate_requests()
-        self._upstream_handler.update_certificate_requests(requests)
+        state = self.state
+        self._upstream_handler.update_certificate_requests(state.certificate_requests)
         self._upstream_handler.deliver_certificates(
-            self._old_handler,
-            self.state.extra_ca_certificates,
+            provider_certificates=state.provider_certificates,
+            certificate_requests=state.certificate_requests,
+            private_key=state.private_key,
+            old_handler=self._old_handler,
+            extra_ca_certificates=state.extra_ca_certificates,
         )
 
         self.unit.status = ops.ActiveStatus()
@@ -105,14 +108,17 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
         """Deliver a signed certificate to the old-interface requirer.
 
-        Delegates to the upstream handler which re-parses live relation data
-        to find the matching requirer and writes the cert, key, and CA to its
-        relation databag.
+        Delegates to the upstream handler which matches against the pre-fetched
+        state snapshot to find the requirer and writes the cert, key, and CA to
+        its relation databag.
         """
+        state = self.state
         self._upstream_handler.handle_certificate_available(
             event,
-            self._old_handler,
-            self.state.extra_ca_certificates,
+            certificate_requests=state.certificate_requests,
+            private_key=state.private_key,
+            old_handler=self._old_handler,
+            extra_ca_certificates=state.extra_ca_certificates,
         )
         self.unit.status = ops.ActiveStatus()
 
