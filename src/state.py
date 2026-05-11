@@ -24,7 +24,6 @@ class CharmState(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     certificate_requests: list[CertificateRequest]
-    csr_fingerprints: dict[int, list[str]] = {}  # keyed by relation_id
     extra_ca_certificates: str = ""
 
     @classmethod
@@ -51,7 +50,6 @@ class CharmState(BaseModel):
         certificate_requests = old_handler.get_certificate_requests()
         return cls(
             certificate_requests=certificate_requests,
-            csr_fingerprints=old_handler.get_csr_fingerprints(certificate_requests),
             extra_ca_certificates=charm_config.ca_certificates,
         )
 
