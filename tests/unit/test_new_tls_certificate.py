@@ -159,8 +159,11 @@ class TestHandleCertificateAvailable:
         charm.model.get_relation.return_value = relation
 
         cr = _make_cr(
-            "ovn-central-client", [], relation_id=3,
-            requirer_unit_name="ovn-central/client", is_client=True,
+            "ovn-central-client",
+            [],
+            relation_id=3,
+            requirer_unit_name="ovn-central/client",
+            is_client=True,
         )
         old_handler = self._make_old_handler([cr])
         event = self._make_event("ovn-central-client")

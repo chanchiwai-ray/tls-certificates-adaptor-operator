@@ -11,7 +11,6 @@ import ops.testing
 import pytest
 from charmlibs.interfaces.tls_certificates import (
     Certificate,
-    CertificateSigningRequest,
     PrivateKey,
     TLSCertificatesRequiresV4,
 )

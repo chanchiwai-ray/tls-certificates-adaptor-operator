@@ -34,9 +34,9 @@ from charmlibs.interfaces.tls_certificates import (
 
 from constants import OLD_INTERFACE_RELATION_NAME, UPSTREAM_RELATION_NAME
 from crypto import build_ca_bundle, classify_sans
-from models import CertificateRequest
 
 if TYPE_CHECKING:
+    from models import CertificateRequest
     from old_tls_certificate import OldTLSCertificatesRelation
 
 logger = logging.getLogger(__name__)
