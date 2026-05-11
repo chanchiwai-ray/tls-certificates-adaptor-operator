@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 from charmlibs.interfaces.tls_certificates import PrivateKey, ProviderCertificate
 
 from models import CertificateRequest
-from old_tls_certificate import OldTLSCertificatesRelation
 from new_tls_certificate import NewTLSCertificatesRelation
+from old_tls_certificate import OldTLSCertificatesRelation
 from state import CharmState
 
 
@@ -33,7 +33,9 @@ def _make_upstream_handler(
     private_key: PrivateKey | None = None,
 ) -> MagicMock:
     mock = MagicMock(spec=NewTLSCertificatesRelation)
-    mock.get_provider_certificates.return_value = provider_certs if provider_certs is not None else []
+    mock.get_provider_certificates.return_value = (
+        provider_certs if provider_certs is not None else []
+    )
     mock.get_private_key.return_value = private_key
     return mock
 
@@ -87,7 +89,9 @@ class TestCharmState:
         act: Call CharmState.from_charm.
         assert: extra_ca_certificates is populated from the charm config.
         """
-        state = CharmState.from_charm(_make_charm("ROOT_CA_PEM"), _make_old_handler(), _make_upstream_handler())
+        state = CharmState.from_charm(
+            _make_charm("ROOT_CA_PEM"), _make_old_handler(), _make_upstream_handler()
+        )
 
         assert state.extra_ca_certificates == "ROOT_CA_PEM"
 

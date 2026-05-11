@@ -4,7 +4,6 @@
 """Unit tests for charm.py."""
 
 import json
-import logging
 
 import ops
 import ops.testing
@@ -12,15 +11,11 @@ import pytest
 from charmlibs.interfaces.tls_certificates import (
     Certificate,
     PrivateKey,
-    TLSCertificatesRequiresV4,
 )
 
 from charm import TLSCertificateAdaptorCharm
 from constants import OLD_INTERFACE_RELATION_NAME, UPSTREAM_RELATION_NAME
 from tests.unit.conftest import sign_csr
-
-# Class-level access to ObjectEvents is not fully typed; suppress the mypy warning once.
-_CERT_AVAILABLE_EVENT = TLSCertificatesRequiresV4.on.certificate_available  # type: ignore[arg-type]
 
 # A session-level key and CSR for tests that need a real cert.
 _LIBRARY_KEY = PrivateKey.generate(key_size=2048)
@@ -280,8 +275,28 @@ class TestCertificatesUpstreamRelationChanged:
         assert "key" in payload["keystone.internal"]
 
 
-class TestCertificateAvailableDelivery:
-    """Tests for _on_certificate_available."""
+class TestCertificateDelivery:
+    """Tests for certificate delivery via reconcile on upstream relation_changed."""
+
+    def _upstream_relation_with_cert(
+        self, csr: object, cert: object, ca_certificate: object
+    ) -> ops.testing.Relation:
+        """Return an upstream relation with the given cert in its app databag."""
+        return ops.testing.Relation(
+            endpoint=UPSTREAM_RELATION_NAME,
+            remote_app_data={
+                "certificates": json.dumps(
+                    [
+                        {
+                            "ca": str(ca_certificate),
+                            "certificate_signing_request": str(csr),
+                            "certificate": str(cert),
+                            "chain": None,
+                        }
+                    ]
+                ),
+            },
+        )
 
     def test_happy_path_delivers_cert_batch_format(
         self,
@@ -291,19 +306,9 @@ class TestCertificateAvailableDelivery:
     ):
         """
         arrange: Old-interface relation with a pending batch cert request; upstream has cert.
-        act: Fire certificate_available.
+        act: Fire upstream relation_changed.
         assert: processed_requests dict contains cert and key; ca is top-level; ActiveStatus set.
         """
-        old_relation = ops.testing.Relation(
-            endpoint=OLD_INTERFACE_RELATION_NAME,
-            remote_app_name="keystone",
-            remote_units_data={
-                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
-            },
-        )
-        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
-
-        # Build a real CSR using the library so it matches what the library will emit.
         from charmlibs.interfaces.tls_certificates import CertificateRequestAttributes
 
         attrs = CertificateRequestAttributes(
@@ -314,21 +319,20 @@ class TestCertificateAvailableDelivery:
         csr = attrs.generate_csr(_LIBRARY_KEY)
         cert = sign_csr(str(csr), ca_certificate, ca_private_key)
 
+        old_relation = ops.testing.Relation(
+            endpoint=OLD_INTERFACE_RELATION_NAME,
+            remote_app_name="keystone",
+            remote_units_data={
+                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
+            },
+        )
+        upstream_relation = self._upstream_relation_with_cert(csr, cert, ca_certificate)
         state_in = ops.testing.State(
             relations={old_relation, upstream_relation},
             secrets={_library_key_secret()},
         )
 
-        out = context.run(
-            context.on.custom(
-                _CERT_AVAILABLE_EVENT,
-                certificate=cert,
-                certificate_signing_request=csr,
-                ca=ca_certificate,
-                chain=[ca_certificate],
-            ),
-            state_in,
-        )
+        out = context.run(context.on.relation_changed(relation=upstream_relation), state_in)
 
         assert out.unit_status == ops.ActiveStatus()
         out_old_relation = out.get_relation(old_relation.id)
@@ -341,26 +345,17 @@ class TestCertificateAvailableDelivery:
         assert "key" in payload["keystone.internal"]
         assert "ca" in out_old_relation.local_unit_data
 
-    def test_certificate_available_sets_active_status_without_calling_reconcile(
+    def test_ca_propagated_to_all_old_interface_relations(
         self,
         context: ops.testing.Context,
         ca_certificate: Certificate,
         ca_private_key: PrivateKey,
     ):
         """
-        arrange: Old-interface relation with a pending request.
-        act: Fire certificate_available.
-        assert: ActiveStatus is set directly (not via reconcile double-delivery path).
+        arrange: Two old-interface relations; upstream has issued a cert for one.
+        act: Fire upstream relation_changed.
+        assert: ca key is written to BOTH old-interface relation databags.
         """
-        old_relation = ops.testing.Relation(
-            endpoint=OLD_INTERFACE_RELATION_NAME,
-            remote_app_name="keystone",
-            remote_units_data={
-                0: {"cert_requests": _cert_req("keystone.internal", ["keystone.internal"])}
-            },
-        )
-        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
-
         from charmlibs.interfaces.tls_certificates import CertificateRequestAttributes
 
         attrs = CertificateRequestAttributes(
@@ -371,80 +366,6 @@ class TestCertificateAvailableDelivery:
         csr = attrs.generate_csr(_LIBRARY_KEY)
         cert = sign_csr(str(csr), ca_certificate, ca_private_key)
 
-        state_in = ops.testing.State(relations={old_relation, upstream_relation})
-
-        out = context.run(
-            context.on.custom(
-                _CERT_AVAILABLE_EVENT,
-                certificate=cert,
-                certificate_signing_request=csr,
-                ca=ca_certificate,
-                chain=[ca_certificate],
-            ),
-            state_in,
-        )
-
-        assert out.unit_status == ops.ActiveStatus()
-
-    def test_no_matching_request_logs_error(
-        self,
-        context: ops.testing.Context,
-        ca_certificate: Certificate,
-        ca_private_key: PrivateKey,
-        caplog: pytest.LogCaptureFixture,
-    ):
-        """
-        arrange: No old-interface cert requests match the arriving certificate.
-        act: Fire certificate_available.
-        assert: Error is logged; no cert written to databag.
-        """
-        old_relation = ops.testing.Relation(
-            endpoint=OLD_INTERFACE_RELATION_NAME,
-            remote_app_name="keystone",
-            # No cert_requests data — no pending requests
-        )
-        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
-
-        from charmlibs.interfaces.tls_certificates import CertificateRequestAttributes
-
-        attrs = CertificateRequestAttributes(
-            common_name="unknown.internal",
-            sans_dns=["unknown.internal"],
-            add_unique_id_to_subject_name=False,
-        )
-        csr = attrs.generate_csr(_LIBRARY_KEY)
-        cert = sign_csr(str(csr), ca_certificate, ca_private_key)
-
-        state_in = ops.testing.State(relations={old_relation, upstream_relation})
-
-        with caplog.at_level(logging.ERROR):
-            out = context.run(
-                context.on.custom(
-                    _CERT_AVAILABLE_EVENT,
-                    certificate=cert,
-                    certificate_signing_request=csr,
-                    ca=ca_certificate,
-                    chain=[ca_certificate],
-                ),
-                state_in,
-            )
-
-        assert any("No matching" in r.message for r in caplog.records)
-        out_rel = out.get_relation(old_relation.id)
-        assert out_rel is not None
-        assert "processed_requests" not in " ".join(out_rel.local_unit_data.keys())
-
-    def test_ca_propagated_to_all_old_interface_relations(
-        self,
-        context: ops.testing.Context,
-        ca_certificate: Certificate,
-        ca_private_key: PrivateKey,
-    ):
-        """
-        arrange: Two old-interface relations; cert available for one of them.
-        act: Fire certificate_available.
-        assert: ca key is written to BOTH old-interface relation databags.
-        """
         keystone_relation = ops.testing.Relation(
             endpoint=OLD_INTERFACE_RELATION_NAME,
             remote_app_name="keystone",
@@ -456,33 +377,13 @@ class TestCertificateAvailableDelivery:
             endpoint=OLD_INTERFACE_RELATION_NAME,
             remote_app_name="cinder",
         )
-        upstream_relation = ops.testing.Relation(endpoint=UPSTREAM_RELATION_NAME)
-
-        from charmlibs.interfaces.tls_certificates import CertificateRequestAttributes
-
-        attrs = CertificateRequestAttributes(
-            common_name="keystone.internal",
-            sans_dns=["keystone.internal"],
-            add_unique_id_to_subject_name=False,
-        )
-        csr = attrs.generate_csr(_LIBRARY_KEY)
-        cert = sign_csr(str(csr), ca_certificate, ca_private_key)
-
+        upstream_relation = self._upstream_relation_with_cert(csr, cert, ca_certificate)
         state_in = ops.testing.State(
             relations={keystone_relation, cinder_relation, upstream_relation},
             secrets={_library_key_secret()},
         )
 
-        out = context.run(
-            context.on.custom(
-                _CERT_AVAILABLE_EVENT,
-                certificate=cert,
-                certificate_signing_request=csr,
-                ca=ca_certificate,
-                chain=[ca_certificate],
-            ),
-            state_in,
-        )
+        out = context.run(context.on.relation_changed(relation=upstream_relation), state_in)
 
         for rel_id in (keystone_relation.id, cinder_relation.id):
             out_rel = out.get_relation(rel_id)

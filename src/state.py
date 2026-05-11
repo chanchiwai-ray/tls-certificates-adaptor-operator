@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 import ops
 from charmlibs.interfaces.tls_certificates import PrivateKey, ProviderCertificate
@@ -14,7 +15,10 @@ from pydantic import BaseModel, ConfigDict
 
 from config import CharmConfig
 from models import CertificateRequest  # noqa: TC001
-from old_tls_certificate import OldTLSCertificatesRelation  # noqa: TC001
+
+if TYPE_CHECKING:
+    from new_tls_certificate import NewTLSCertificatesRelation
+    from old_tls_certificate import OldTLSCertificatesRelation
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +53,7 @@ class CharmState(BaseModel):
         cls,
         charm: ops.CharmBase,
         old_handler: OldTLSCertificatesRelation,
-        upstream_handler: "NewTLSCertificatesRelation",  # noqa: F821 - forward ref
+        upstream_handler: NewTLSCertificatesRelation,
     ) -> CharmState:
         """Build a CharmState snapshot from live charm and relation data.
 

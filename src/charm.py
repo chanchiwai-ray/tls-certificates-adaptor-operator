@@ -11,7 +11,6 @@ import logging
 import typing
 
 import ops
-from charmlibs.interfaces.tls_certificates import CertificateAvailableEvent
 
 from constants import (
     OLD_INTERFACE_RELATION_NAME,
@@ -20,7 +19,6 @@ from constants import (
 from new_tls_certificate import NewTLSCertificatesRelation
 from old_tls_certificate import OldTLSCertificatesRelation
 from state import CharmBaseWithState, CharmState
-
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +45,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
 
         self._old_handler = OldTLSCertificatesRelation(self)
         self._upstream_handler = NewTLSCertificatesRelation(self)
-        self.tls_certificates = self._upstream_handler.tls_certificates
 
         self.framework.observe(self.on.install, self.reconcile)
         self.framework.observe(self.on.config_changed, self.reconcile)
@@ -63,10 +60,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
         self.framework.observe(
             self.on[UPSTREAM_RELATION_NAME].relation_changed,
             self.reconcile,
-        )
-        self.framework.observe(
-            self.tls_certificates.on.certificate_available,
-            self._on_certificate_available,
         )
 
     @property
@@ -103,23 +96,6 @@ class TLSCertificateAdaptorCharm(CharmBaseWithState):
             extra_ca_certificates=state.extra_ca_certificates,
         )
 
-        self.unit.status = ops.ActiveStatus()
-
-    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
-        """Deliver a signed certificate to the old-interface requirer.
-
-        Delegates to the upstream handler which matches against the pre-fetched
-        state snapshot to find the requirer and writes the cert, key, and CA to
-        its relation databag.
-        """
-        state = self.state
-        self._upstream_handler.handle_certificate_available(
-            event,
-            certificate_requests=state.certificate_requests,
-            private_key=state.private_key,
-            old_handler=self._old_handler,
-            extra_ca_certificates=state.extra_ca_certificates,
-        )
         self.unit.status = ops.ActiveStatus()
 
 

@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING
 
 import ops
 from charmlibs.interfaces.tls_certificates import (
-    CertificateAvailableEvent,
     CertificateRequestAttributes,
     CertificateSigningRequest,
     PrivateKey,
@@ -64,11 +63,6 @@ class NewTLSCertificatesRelation:
             relationship_name=UPSTREAM_RELATION_NAME,
             certificate_requests=[],
         )
-
-    @property
-    def tls_certificates(self) -> TLSCertificatesRequiresV4:
-        """The underlying TLSCertificatesRequiresV4 library instance."""
-        return self._tls
 
     def get_provider_certificates(self) -> list[ProviderCertificate]:
         """Return all currently issued provider certificates.
@@ -184,50 +178,6 @@ class NewTLSCertificatesRelation:
             )
             old_handler.write_ca(ca=full_ca_pem)
 
-    def handle_certificate_available(
-        self,
-        event: CertificateAvailableEvent,
-        certificate_requests: list[CertificateRequest],
-        private_key: PrivateKey | None,
-        old_handler: OldTLSCertificatesRelation,
-        extra_ca_certificates: str,
-    ) -> None:
-        """Deliver a signed certificate to the old-interface requirer.
-
-        Matches the event's CSR against the pre-fetched ``certificate_requests``
-        snapshot and writes the cert, key, and CA to all matching requirer
-        relation databags.
-
-        Logs an error and returns gracefully if no matching request is found or
-        if the private key is unavailable.
-
-        Args:
-            event (CertificateAvailableEvent): The certificate available event.
-            certificate_requests (list[CertificateRequest]): All pending cert requests
-                from old-interface requirer unit databags.
-            private_key (PrivateKey | None): The library-managed unit private key.
-            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
-                relations.
-            extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append
-                to the CA bundle (from charm config).
-        """
-        ca_pem = str(event.ca)
-        chain_pems = [str(c) for c in event.chain]
-        certificate_pem = str(event.certificate)
-        delivered = self._deliver_one(
-            csr=event.certificate_signing_request,
-            certificate_pem=certificate_pem,
-            ca_pem=ca_pem,
-            chain_pems=chain_pems,
-            certificate_requests=certificate_requests,
-            private_key=private_key,
-            old_handler=old_handler,
-            extra_ca_certificates=extra_ca_certificates,
-        )
-        if delivered:
-            full_ca_pem = build_ca_bundle(ca_pem, chain_pems, certificate_pem, extra_ca_certificates)
-            old_handler.write_ca(ca=full_ca_pem)
-
     def _deliver_one(
         self,
         csr: CertificateSigningRequest,
@@ -238,7 +188,7 @@ class NewTLSCertificatesRelation:
         private_key: PrivateKey | None,
         old_handler: OldTLSCertificatesRelation,
         extra_ca_certificates: str,
-    ) -> bool:
+    ) -> None:
         """Deliver one certificate to all matching old-interface requirer units.
 
         Matches on ``(common_name, sorted_sans)`` against the pre-fetched
@@ -257,10 +207,6 @@ class NewTLSCertificatesRelation:
             old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
                 relations.
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append.
-
-        Returns:
-            bool: True if at least one certificate was written; False if delivery was
-                skipped (no matching request or private key unavailable).
         """
         common_name = str(csr.common_name)
         sans = sorted((csr.sans_dns or set()) | (csr.sans_ip or set()))
@@ -279,14 +225,14 @@ class NewTLSCertificatesRelation:
                 common_name,
                 sans,
             )
-            return False
+            return
 
         if private_key is None:
             logger.error(
                 "Private key not yet available for CN=%r; skipping delivery",
                 common_name,
             )
-            return False
+            return
 
         full_ca_pem = build_ca_bundle(ca_pem, chain_pems, certificate_pem, extra_ca_certificates)
         key = str(private_key)
@@ -321,4 +267,3 @@ class NewTLSCertificatesRelation:
                     ca=full_ca_pem,
                     is_legacy=cr.is_legacy,
                 )
-        return True
