@@ -16,10 +16,7 @@ the library automatically re-submits the CSR.  The adaptor charm does not need
 to implement any explicit renewal logic.
 
 This module provides :class:`NewTLSCertificatesRelation`, which wraps the
-library to expose only the operations needed by the adaptor charm and
-translates :class:`~charmlibs.interfaces.tls_certificates.ProviderCertificate`
-objects into the shared :class:`~old_tls_certificate.IssuedCertificate` model
-consumed by :class:`~state.CharmState`.
+library to expose only the operations needed by the adaptor charm.
 """
 
 from __future__ import annotations
@@ -30,24 +27,18 @@ from typing import TYPE_CHECKING
 
 import ops
 from charmlibs.interfaces.tls_certificates import (
-    CertificateAvailableEvent,
-    CertificateDeniedEvent,
     CertificateRequestAttributes,
+    CertificateSigningRequest,
     PrivateKey,
+    ProviderCertificate,
     TLSCertificatesRequiresV4,
 )
 
-from constants import (
-    JUJU_SECRET_IS_CLIENT_KEY,
-    JUJU_SECRET_IS_LEGACY_KEY,
-    OLD_INTERFACE_RELATION_NAME,
-    UPSTREAM_RELATION_NAME,
-)
-from crypto import build_ca_bundle, classify_sans, csr_sha256_hex
-from models import CertificateRequest, IssuedCertificate
-from secret import get_csr_mapping, revoke_csr_mapping
+from constants import OLD_INTERFACE_RELATION_NAME, UPSTREAM_RELATION_NAME
+from crypto import build_ca_bundle, classify_sans
 
 if TYPE_CHECKING:
+    from models import CertificateRequest
     from old_tls_certificate import OldTLSCertificatesRelation
 
 logger = logging.getLogger(__name__)
@@ -57,31 +48,69 @@ class NewTLSCertificatesRelation:
     """Manages interactions with the upstream modern tls-certificates (v4) provider.
 
     Wraps :class:`~charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4`
-    to expose only the operations needed by the adaptor charm, and translates
-    provider certificates into the shared :class:`~models.IssuedCertificate`
-    model used by :class:`~state.CharmState`.
+    to expose only the operations needed by the adaptor charm.
     """
 
-    def __init__(
-        self,
-        charm: ops.CharmBase,
-        private_key_pem: str,
-        certificate_requests: list[CertificateRequest] | None = None,
-    ) -> None:
+    def __init__(self, charm: ops.CharmBase) -> None:
         """Initialise the upstream relation handler.
 
         Args:
             charm (ops.CharmBase): The charm instance.
-            private_key_pem (str): PEM-encoded private key for the upstream CSR.
-            certificate_requests (list[CertificateRequest] | None): The current set of certificate
-                requests from the old-interface handler, used to seed the upstream library.
-                Defaults to an empty list when not provided.
         """
         self._charm = charm
-        cert_request_attrs = []
-        for cr in certificate_requests or []:
+        self._tls = TLSCertificatesRequiresV4(
+            charm=charm,
+            relationship_name=UPSTREAM_RELATION_NAME,
+            certificate_requests=[],
+        )
+
+    def get_provider_certificates(self) -> list[ProviderCertificate]:
+        """Return all currently issued provider certificates.
+
+        Returns:
+            list[ProviderCertificate]: Issued certificates from the upstream provider,
+                or an empty list if none have been issued yet.
+        """
+        return self._tls.get_provider_certificates()
+
+    def get_private_key(self) -> PrivateKey | None:
+        """Return the library-managed private key for this unit, or None if unavailable.
+
+        Returns:
+            PrivateKey | None: The unit private key, or None if the upstream relation
+                has not been established yet.
+        """
+        return self._tls.private_key
+
+    def update_certificate_requests(self, requests: list[CertificateRequest]) -> None:
+        """Update the upstream library's certificate requests and sync.
+
+        Converts :class:`~models.CertificateRequest` objects to
+        :class:`~charmlibs.interfaces.tls_certificates.CertificateRequestAttributes`,
+        assigns them to the library, and calls ``sync()`` to submit new CSRs
+        and clean up stale ones.
+
+        Deduplicates by ``(common_name, sorted_dns_sans, sorted_ip_sans)`` so
+        that multiple requirer units requesting the same CN+SANs result in only
+        one upstream CSR.
+
+        Args:
+            requests (list[CertificateRequest]): The current set of certificate requests
+                from the old-interface handler.
+        """
+        seen: set[tuple] = set()
+        attrs = []
+        for cr in requests:
             dns_sans, ip_sans = classify_sans(cr.sans)
-            cert_request_attrs.append(
+            key = (
+                cr.common_name,
+                tuple(sorted(dns_sans)),
+                tuple(sorted(ip_sans)),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            attrs.append(
                 CertificateRequestAttributes(
                     common_name=cr.common_name,
                     sans_dns=dns_sans if dns_sans else None,
@@ -89,139 +118,152 @@ class NewTLSCertificatesRelation:
                     add_unique_id_to_subject_name=False,
                 )
             )
-        self._tls = TLSCertificatesRequiresV4(
-            charm=charm,
-            relationship_name=UPSTREAM_RELATION_NAME,
-            certificate_requests=cert_request_attrs,
-            private_key=PrivateKey.from_string(private_key_pem),
-            refresh_events=[
-                charm.on[OLD_INTERFACE_RELATION_NAME].relation_changed,
-                charm.on.upgrade_charm,
-            ],
-        )
+        self._tls.certificate_requests = attrs
+        self._tls.sync()
 
-    @property
-    def tls_certificates(self) -> TLSCertificatesRequiresV4:
-        """The underlying TLSCertificatesRequiresV4 library instance."""
-        return self._tls
-
-    def get_issued_certificates(self) -> dict[str, IssuedCertificate]:
-        """Return issued certificates keyed by CSR SHA-256 hex fingerprint.
-
-        Maps each :class:`~charmlibs.interfaces.tls_certificates.ProviderCertificate`
-        returned by the upstream (v4) library into an
-        :class:`~old_tls_certificate.IssuedCertificate` and keys it by the
-        SHA-256 hex fingerprint of the corresponding CSR.
-
-        Returns:
-            dict[str, IssuedCertificate]: A dict mapping CSR fingerprint to IssuedCertificate for each
-                certificate currently assigned by the upstream provider.
-        """
-        issued: dict[str, IssuedCertificate] = {}
-        for pc in self._tls.get_provider_certificates():
-            fingerprint = csr_sha256_hex(str(pc.certificate_signing_request))
-            issued[fingerprint] = IssuedCertificate(
-                certificate=str(pc.certificate),
-                ca=str(pc.ca),
-                chain=[str(c) for c in pc.chain],
-            )
-        return issued
-
-    def handle_certificate_available(
+    def deliver_certificates(
         self,
-        event: CertificateAvailableEvent,
+        provider_certificates: list[ProviderCertificate],
+        certificate_requests: list[CertificateRequest],
+        private_key: PrivateKey | None,
         old_handler: OldTLSCertificatesRelation,
         extra_ca_certificates: str,
     ) -> None:
-        """Deliver a signed certificate to the old-interface requirer.
+        """Deliver all currently available provider certificates to old-interface requirers.
 
-        Looks up the per-CSR mapping secret, builds the full CA bundle, then
-        writes the cert and key to the old-interface requirer's relation databag.
-        The mapping secret is intentionally retained so that library-managed
-        renewal can reuse it when the same CSR fingerprint fires a new
-        ``certificate_available``.  Logs an error and skips gracefully if the
-        mapping is missing.  Revokes the mapping and logs at INFO if the
-        old-interface relation is gone.
+        Iterates every :class:`~charmlibs.interfaces.tls_certificates.ProviderCertificate`
+        and calls :meth:`_deliver_one` for each, ensuring that every old-interface
+        requirer unit whose request matches an issued certificate receives the cert,
+        key, and CA — even if they joined the relation after the original
+        ``certificate_available`` event fired.
+
+        Also writes the CA bundle to all old-interface relations unconditionally
+        when at least one provider certificate exists, so that requirers that
+        have not yet submitted a cert request still receive the CA.
 
         Args:
-            event (CertificateAvailableEvent): The certificate available event.
-            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface relations.
+            provider_certificates (list[ProviderCertificate]): Currently issued
+                certificates from the upstream provider.
+            certificate_requests (list[CertificateRequest]): All pending cert requests
+                from old-interface requirer unit databags.
+            private_key (PrivateKey | None): The library-managed unit private key.
+            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
+                relations.
             extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append
                 to the CA bundle (from charm config).
         """
-        csr_pem = str(event.certificate_signing_request)
-        mapping = get_csr_mapping(self._charm, csr_pem)
-        if mapping is None:
-            logger.error(
-                "No CSR mapping found for certificate (CN=%s); skipping delivery",
-                event.certificate.common_name,
-            )
+        if private_key is None:
+            logger.debug("Private key not yet available; skipping certificate delivery")
             return
 
-        relation_id = int(mapping["relation-id"])
-        requirer_unit_name = mapping["requirer-unit"]
-        private_key_pem = mapping["private-key"]
-        is_legacy = mapping.get(JUJU_SECRET_IS_LEGACY_KEY, "false") == "true"
-        is_client = mapping.get(JUJU_SECRET_IS_CLIENT_KEY, "false") == "true"
-
-        relation = None
-        with contextlib.suppress(ops.RelationNotFoundError):
-            relation = self._charm.model.get_relation(OLD_INTERFACE_RELATION_NAME, relation_id)
-        if relation is None or not relation.active:
-            logger.info(
-                "Old-interface relation %d no longer exists; revoking mapping for %s",
-                relation_id,
-                requirer_unit_name,
+        for pc in provider_certificates:
+            self._deliver_one(
+                csr=pc.certificate_signing_request,
+                certificate_pem=str(pc.certificate),
+                ca_pem=str(pc.ca),
+                chain_pems=[str(c) for c in pc.chain],
+                certificate_requests=certificate_requests,
+                private_key=private_key,
+                old_handler=old_handler,
+                extra_ca_certificates=extra_ca_certificates,
             )
-            revoke_csr_mapping(self._charm, csr_pem)
-            return
 
-        leaf_pem = str(event.certificate)
-        full_ca_pem = build_ca_bundle(
-            str(event.ca),
-            [str(c) for c in event.chain],
-            leaf_pem,
-            extra_ca_certificates,
-        )
-
-        if is_client:
-            old_handler.write_client_cert(
-                relation_id=relation_id,
-                cert=str(event.certificate),
-                key=private_key_pem,
+        if provider_certificates:
+            first = provider_certificates[0]
+            full_ca_pem = build_ca_bundle(
+                str(first.ca),
+                [str(c) for c in first.chain],
+                str(first.certificate),
+                extra_ca_certificates,
             )
-        else:
-            old_handler.write_certificate(
-                relation_id=relation_id,
-                requirer_unit_name=requirer_unit_name,
-                common_name=str(event.certificate.common_name),
-                cert=str(event.certificate),
-                key=private_key_pem,
-                ca=full_ca_pem,
-                is_legacy=is_legacy,
-            )
-        old_handler.write_ca(ca=full_ca_pem)
+            old_handler.write_ca(ca=full_ca_pem)
 
-    def handle_certificate_denied(self, event: CertificateDeniedEvent) -> None:
-        """Handle a denied certificate request from the upstream TLS provider.
+    def _deliver_one(
+        self,
+        csr: CertificateSigningRequest,
+        certificate_pem: str,
+        ca_pem: str,
+        chain_pems: list[str],
+        certificate_requests: list[CertificateRequest],
+        private_key: PrivateKey | None,
+        old_handler: OldTLSCertificatesRelation,
+        extra_ca_certificates: str,
+    ) -> None:
+        """Deliver one certificate to all matching old-interface requirer units.
 
-        Revokes the mapping secret for the denied CSR and logs the error so
-        the operator can investigate.  The old-interface requirer is left in
-        its current state; no data is written to the relation databag.
+        Matches on ``(common_name, sorted_sans)`` against the pre-fetched
+        ``certificate_requests`` snapshot so that the same cert is delivered to
+        every requirer unit that requested it (e.g. ``keystone/0``, ``keystone/1``,
+        ``keystone/2`` on the same relation).
 
         Args:
-            event (CertificateDeniedEvent): The certificate denied event.
+            csr (CertificateSigningRequest): The CSR the certificate was issued for.
+            certificate_pem (str): PEM-encoded signed leaf certificate.
+            ca_pem (str): PEM-encoded CA certificate.
+            chain_pems (list[str]): PEM-encoded intermediate certificates.
+            certificate_requests (list[CertificateRequest]): Pre-fetched snapshot of
+                all pending old-interface cert requests.
+            private_key (PrivateKey | None): The library-managed unit private key.
+            old_handler (OldTLSCertificatesRelation): Handler for writing to old-interface
+                relations.
+            extra_ca_certificates (str): Optional extra PEM-encoded CA certs to append.
         """
-        csr_pem = str(event.certificate_signing_request)
-        mapping = get_csr_mapping(self._charm, csr_pem)
-        if mapping is None:
-            logger.warning(
-                "certificate_denied: no mapping found for denied CSR \u2014 already cleaned up"
+        common_name = str(csr.common_name)
+        sans = sorted((csr.sans_dns or set()) | (csr.sans_ip or set()))
+
+        # Collect ALL matching requests: the same (CN, SANs) may be requested
+        # by multiple requirer units and every one must receive the certificate.
+        matched: list[CertificateRequest] = [
+            cr
+            for cr in certificate_requests
+            if cr.common_name == common_name and sorted(cr.sans) == sans
+        ]
+
+        if not matched:
+            logger.error(
+                "No matching certificate request found for CN=%r sans=%r; skipping delivery",
+                common_name,
+                sans,
             )
             return
-        revoke_csr_mapping(self._charm, csr_pem)
-        logger.error(
-            "Certificate request denied for %s (error: %s); mapping revoked",
-            mapping.get("requirer-unit", "unknown"),
-            event.error,
-        )
+
+        if private_key is None:
+            logger.error(
+                "Private key not yet available for CN=%r; skipping delivery",
+                common_name,
+            )
+            return
+
+        full_ca_pem = build_ca_bundle(ca_pem, chain_pems, certificate_pem, extra_ca_certificates)
+        key = str(private_key)
+
+        for cr in matched:
+            relation: ops.Relation | None = None
+            with contextlib.suppress(ops.RelationNotFoundError):
+                relation = self._charm.model.get_relation(
+                    OLD_INTERFACE_RELATION_NAME, cr.relation_id
+                )
+            if relation is None or not relation.active:
+                logger.info(
+                    "Old-interface relation %d no longer active; skipping delivery for CN=%r",
+                    cr.relation_id,
+                    common_name,
+                )
+                continue
+
+            if cr.is_client:
+                old_handler.write_client_cert(
+                    relation_id=cr.relation_id,
+                    cert=certificate_pem,
+                    key=key,
+                )
+            else:
+                old_handler.write_certificate(
+                    relation_id=cr.relation_id,
+                    requirer_unit_name=cr.requirer_unit_name,
+                    common_name=common_name,
+                    cert=certificate_pem,
+                    key=key,
+                    ca=full_ca_pem,
+                    is_legacy=cr.is_legacy,
+                )
