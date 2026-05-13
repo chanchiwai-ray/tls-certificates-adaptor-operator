@@ -11,7 +11,7 @@ import pytest
 
 
 @pytest.fixture(scope="module", name="charm")
-def charm_fixture(pytestconfig: pytest.Config):
+def charm_fixture(pytestconfig: pytest.Config) -> str | None:
     """Get value from parameter charm-file."""
     charm = pytestconfig.getoption("--charm-file")
     use_existing = pytestconfig.getoption("--use-existing", default=False)
@@ -22,7 +22,7 @@ def charm_fixture(pytestconfig: pytest.Config):
 
 @pytest.fixture(scope="session", name="juju")
 def juju_fixture(request: pytest.FixtureRequest) -> Generator[jubilant.Juju, None, None]:
-    """Pytest fixture that wraps :meth:`jubilant.with_model`."""
+    """Pytest fixture that yields a :class:`jubilant.Juju` connected to a model."""
 
     def show_debug_log(juju: jubilant.Juju):
         """Show debug log.
