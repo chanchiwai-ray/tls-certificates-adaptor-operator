@@ -49,3 +49,63 @@ jobs:
         with:
           name: charm
           path: "*.charm"
+
+  define-matrix:
+    name: Define charm matrix
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      charms: ${{ steps.charms.outputs.charms }}
+    steps:
+      - name: Download charm artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: charm
+
+      - name: List charms
+        id: charms
+        run: |
+          shopt -s nullglob
+          files=(*.charm)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No charm files found" >&2
+            exit 1
+          fi
+          json=$(printf '%s\n' "${files[@]}" | jq -R -s -c 'split("\n")[:-1]')
+          echo "charms=$json" >> "$GITHUB_OUTPUT"
+
+  integration-test:
+    name: Integration test (${{ matrix.charm }})
+    needs: [define-matrix]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        charm: ${{ fromJSON(needs.define-matrix.outputs.charms) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download charm artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: charm
+
+      - name: Setup Juju environment
+        uses: charmed-kubernetes/actions-operator@main
+        with:
+          provider: lxd
+          juju-channel: 3.6/stable
+          charmcraft-channel: 3.x/stable
+
+      - name: Set up Python tooling
+        uses: astral-sh/setup-uv@v7.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
+
+      - name: Run integration tests
+        run: tox -e integration -- --charm-file="${{ matrix.charm }}"
