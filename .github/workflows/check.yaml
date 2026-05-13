@@ -92,20 +92,12 @@ jobs:
         with:
           name: charm
 
-      - name: Install LXD
-        run: |
-          sudo snap install lxd --channel=latest/stable
-          sudo lxd init --auto
-          sudo adduser "$USER" lxd
-          sg lxd -c "lxc network set lxdbr0 ipv6.address none"
-
-      - name: Install Juju
-        run: |
-          sudo snap install juju --channel=3.6/stable
-
-      - name: Bootstrap Juju controller
-        run: |
-          sg lxd -c "juju bootstrap localhost lxd-controller --config 'test-mode=true' --config 'automatically-retry-hooks=false'"
+      - name: Setup Juju environment
+        uses: charmed-kubernetes/actions-operator@main
+        with:
+          provider: lxd
+          juju-channel: 3.6/stable
+          charmcraft-channel: 3.x/stable
 
       - name: Set up Python tooling
         uses: astral-sh/setup-uv@v7.6.0
