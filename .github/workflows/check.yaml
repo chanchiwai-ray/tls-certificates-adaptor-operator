@@ -92,18 +92,20 @@ jobs:
         with:
           name: charm
 
-      - name: Install concierge
-        run: sudo snap install --classic concierge
-
-      - name: Prepare Juju controller
+      - name: Install LXD
         run: |
-          sudo concierge prepare -p machine
+          sudo snap install lxd --channel=latest/stable
+          sudo lxd init --auto
+          sudo adduser "$USER" lxd
+          sg lxd -c "lxc network set lxdbr0 ipv6.address none"
 
-      - name: Copy Juju data to runner user
+      - name: Install Juju
         run: |
-          mkdir -p "$HOME/.local/share"
-          sudo cp -a /root/.local/share/juju "$HOME/.local/share/"
-          sudo chown -R "$(id -u):$(id -g)" "$HOME/.local/share/juju"
+          sudo snap install juju --channel=3.6/stable
+
+      - name: Bootstrap Juju controller
+        run: |
+          sg lxd -c "juju bootstrap localhost lxd-controller --config 'test-mode=true' --config 'automatically-retry-hooks=false'"
 
       - name: Set up Python tooling
         uses: astral-sh/setup-uv@v7.6.0
